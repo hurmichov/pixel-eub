@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pixel-eub"
-version = "1.0.0b2"
+version = "1.0.0b3"
 description = "Request-driven Tensor Pixel ROM Recovery to fastboot utility"
 readme = "README.md"
 requires-python = ">=3.10"

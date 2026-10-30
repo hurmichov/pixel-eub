@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0b3 — 2026-10-30
+
+- Consolidate top-level help into one list of unique command options, with
+  the applicable commands shown beside each option. Remove repeated command
+  usage and `options:` blocks.
+- Explain command-dependent device/build defaults without changing parsing
+  or focused `COMMAND -h` output.
+
 ## 1.0.0b2 — 2026-10-30
 
 - Show all command arguments in top-level `-h` / `--help`, including their
