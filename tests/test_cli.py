@@ -304,6 +304,7 @@ class CliTests(unittest.TestCase):
                     self.assertIs(
                         kwargs["confirm_panic"], confirm_rom_panic if override else None
                     )
+                    self.assertFalse(kwargs["allow_cached_identity"])
                     session.attempts["BL1"] = 1
                     session.sent.append("BL1")
 
@@ -331,6 +332,85 @@ class CliTests(unittest.TestCase):
                     code, _, errors = self.run_cli(*args)
                 self.assertEqual((code, errors), (0, ""))
                 prompt.assert_not_called()
+
+    def test_override_panic_after_reconnect_without_fresh_identity_offers_choice(self):
+        from pixel_eub.images import Sources
+        from pixel_eub.protocol import frame
+
+        for answer in ("yes", "NO"):
+            with self.subTest(answer=answer):
+                sources = Sources(
+                    [
+                        {
+                            "bl1": signed("APBL"),
+                            "pbl": signed("EPBL", b"pbl"),
+                            "bl2": signed("BL2", b"bl2"),
+                            "abl": signed("ABL", b"abl"),
+                            "bl31": signed("BL31", b"bl31"),
+                        }
+                    ],
+                    "gs101",
+                )
+                first = FakeLink([b"eub:req:09845001:bl1\nC"])
+                second = FakeLink(
+                    [b"00000001\ne0000080\na0031111\nirom_booting_failure::\n"]
+                )
+                fb = Mock()
+                fb.verify.return_value = "RECOVERED"
+                with (
+                    patch("pixel_eub.cli.probe", return_value="09845001"),
+                    patch("pixel_eub.cli.prepare", return_value=sources),
+                    patch(
+                        "pixel_eub.cli.find_port",
+                        side_effect=[
+                            Port("first", "USBID"),
+                            Port("first", "USBID"),
+                            Port("second", "USBID"),
+                            NoDevice("not found"),
+                        ],
+                    ),
+                    patch(
+                        "pixel_eub.cli.open_port",
+                        side_effect=[FakeLink([]), first, second],
+                    ),
+                    patch("pixel_eub.cli.Fastboot", return_value=fb) as fastboot,
+                    patch("builtins.input") as prompt,
+                ):
+
+                    def choose(message, answer=answer, second=second):
+                        self.assertIn(
+                            "Continue uploading despite the ROM panic", message
+                        )
+                        self.assertFalse(second.output)
+                        fastboot.assert_not_called()
+                        return answer
+
+                    prompt.side_effect = choose
+                    code, output, errors = self.run_cli(
+                        "boot",
+                        "--device",
+                        "Pixel 6a",
+                        "--pack",
+                        "gs201",
+                        "--override",
+                        "--verbose",
+                        "--reconnect-wait",
+                        "0.01",
+                    )
+                prompt.assert_called_once()
+                self.assertIn("using cached session identity 09845001 (gs101)", output)
+                self.assertEqual(first.output, frame(sources.payload("BL1")))
+                if answer == "yes":
+                    self.assertEqual((code, errors), (0, ""))
+                    self.assertTrue(
+                        second.output.startswith(frame(sources.payload("EPBL")))
+                    )
+                    self.assertIn("Uploaded BL3B", output)
+                else:
+                    self.assertEqual(code, 1)
+                    self.assertIn("cancelled", errors)
+                    self.assertFalse(second.output)
+                    fastboot.assert_not_called()
 
 
 class TransportTests(unittest.TestCase):

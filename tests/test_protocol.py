@@ -234,9 +234,24 @@ class ProtocolTests(unittest.TestCase):
                 session,
                 "gs201",
                 confirm_panic=Mock(),
+                allow_cached_identity=True,
                 report=lambda _: None,
             )
         self.assertFalse(wrong.output)
+
+        untrusted = FakeLink([b"irom_booting_failure::\n"])
+        confirm = Mock()
+        with self.assertRaisesRegex(EubError, "before identity"):
+            serve(
+                untrusted,
+                sources,
+                session,
+                "gs201",
+                confirm_panic=confirm,
+                report=lambda _: None,
+            )
+        confirm.assert_not_called()
+        self.assertFalse(untrusted.output)
         resumed = FakeLink([b"exynos_usb_booting:eub:09855001\n"])
         with self.assertRaises(OSError):
             serve(
