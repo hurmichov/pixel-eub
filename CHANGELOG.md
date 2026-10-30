@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0b2 — 2026-10-30
+
+- Show all command arguments in top-level `-h` / `--help`, including their
+  descriptions and default values. Command-specific help remains available.
+- Describe previously undocumented timeouts, checksum, refresh and verbose options.
+- Add read-only `doctor` diagnostics for Python/pyserial, Pixel ROM USB port
+  permissions, fastboot location, cache permissions/free space and optional Linux
+  port-recovery tools. No phone is opened, no programs are executed, no files
+  are created, and no system settings are changed by this command.
+- Diagnostics return 1 for missing pyserial, port permission failures or unusable
+  cache paths; absence of a phone or optional fastboot/tools is informational.
+
 ## 1.0.0b1 — 2026-10-30
 
 First GitHub prerelease: **v1.0 beta**, tagged `v1.0.0-beta.1`.

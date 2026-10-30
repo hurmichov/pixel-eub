@@ -2,6 +2,14 @@
 
 English · [Русский](README.ru.md)
 
+Beta 2 adds `./pixel-eub doctor`: read-only checks for dependencies, ROM USB
+port permissions, fastboot location, cache permissions/free space and optional
+Linux port-recovery tools. Use `--fastboot PATH` or `--cache-dir PATH` to check
+custom paths. No phone is opened or modified. Missing pyserial, denied port
+permissions or an unusable cache return exit code 1; missing optional tools or
+an unplugged phone do not. `./pixel-eub -h` lists all command options;
+`./pixel-eub boot -h` shows just recovery options.
+
 A command-line utility for loading signed boot stages into a compatible Tensor
 Pixel in **Pixel ROM Recovery** mode: a black screen and USB ID `18d1:4f00`.
 It serves the ROM's requests over USB serial, follows USB re-enumeration, and
