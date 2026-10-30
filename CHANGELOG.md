@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0 — 2026-10-30
+
+First stable release, retaining the recovery functionality and fixes from beta.5.
+
+- Start both READMEs with an introduction to pixel-eub; move diagnostics and
+  experimental panic continuation into their relevant sections.
+- Record user-reported USB connection and image-upload testing on one physical
+  Pixel 6a. Successful recovery into bootloader fastboot has not been confirmed.
+- Keep the host-ordered panic continuation explicitly experimental and require
+  `--override` plus a separate YES confirmation.
+- Publish the stable wheel, sdist, source ZIP and SHA-256 checksums.
+
 ## 1.0.0b5 — 2026-10-30
 
 - Fix missing panic confirmation after USB re-enumeration when the ROM prints

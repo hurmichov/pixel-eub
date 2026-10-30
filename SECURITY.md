@@ -29,5 +29,5 @@ from logs. Do not upload firmware or device backups.
 - Recovery uploads go to RAM. The tool does not issue flash, erase or unlock
   commands. A serial disconnect alone is never proof of successful recovery.
 
-The project is experimental. There is no promise of a vulnerability response
+The stable release includes experimental recovery paths. There is no promise of a vulnerability response
 deadline or guaranteed recovery on physical hardware.

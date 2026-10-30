@@ -1,39 +1,18 @@
 # pixel-eub
 
-English · [Русский](README.ru.md)
-
-Beta 4: with `--override`, `irom_booting_failure` after a completed upload
-offers `Continue uploading despite the ROM panic? [YES/NO] (NO):`.
-Explicit `YES` sends the remaining **experimental host-ordered chain without
-new ROM requests or C**: after BL1, PBL is sent immediately. The plan is shown
-before confirmation. Empty input, NO, other answers or EOF cancel. The host
-order is not hardware-validated; the phone may reject or ignore the data.
-PBL uses EPBL (plus EPBB when split); later images use header/body slices.
-Optional images are included only by matching signed tags. Beta 5 also offers
-the prompt when a matched USB reconnect prints panic diagnostics without a
-fresh ROM identity: it warns and uses the previously verified session identity
-only after YES. Any fresh identity is checked, and a changed identity stops
-the attempt. Header failures and NAK remain fatal;
-without `--override`, iROM failure is also fatal. Final fastboot verification
-remains required for success.
-
-Beta 2 adds `./pixel-eub doctor`: read-only checks for dependencies, ROM USB
-port permissions, fastboot location, cache permissions/free space and optional
-Linux port-recovery tools. Use `--fastboot PATH` or `--cache-dir PATH` to check
-custom paths. No phone is opened or modified. Missing pyserial, denied port
-permissions or an unusable cache return exit code 1; missing optional tools or
-an unplugged phone do not. `./pixel-eub -h` lists all command options;
-`./pixel-eub boot -h` shows just recovery options.
-
 A command-line utility for loading signed boot stages into a compatible Tensor
 Pixel in **Pixel ROM Recovery** mode: a black screen and USB ID `18d1:4f00`.
-It serves the ROM's requests over USB serial, follows USB re-enumeration, and
-checks for bootloader fastboot only after the serial transfer phase ends.
+By default, it serves the ROM's requests over USB serial, follows USB
+re-enumeration, and checks for bootloader fastboot only after the serial
+transfer phase ends.
 
-**Experimental: this implementation has not been validated on a physical phone.**
-Synthetic tests and a Linux pseudo-terminal emulator check the protocol; they
-cannot guarantee recovery of a particular phone. Availability of a signed,
-USB-bootable BL1 and the phone's anti-rollback level determine what can boot.
+English · [Русский](README.ru.md)
+
+**Hardware testing:** USB connection and image uploads have been tested on one
+physical Pixel 6a (user-reported). Successful recovery into bootloader fastboot
+has not been confirmed. This limited coverage does not establish recovery support for
+every listed model or bootloader version. A signed USB-bootable BL1 and the
+phone's anti-rollback level still determine which images can boot.
 
 Images are uploaded to RAM. The tool does not flash partitions, unlock the
 bootloader, erase user data, or run scripts from downloaded archives.
@@ -49,8 +28,8 @@ bootloader, erase user data, or run scripts from downloaded archives.
   See [port access](#linux-port-access) before starting.
 
 The code includes serial backends for Linux, macOS, and Windows. The CI matrix
-is configured for those systems on Python 3.10 and 3.14; real-device recovery
-and every OS/device combination have not been validated.
+is configured for those systems on Python 3.10 and 3.14; hardware coverage is currently limited
+to the single reported Pixel 6a test.
 
 ## Run without a virtual environment
 
@@ -122,6 +101,16 @@ alone is not success. Keep only the target phone connected, or select it with
 `"Pixel 7 Pro"`, `cheetah`, and `pixel-7-pro` select the same model. Omitting
 `--device` probes the SoC and asks for the actual model in an interactive
 terminal; ROM identity does not uniquely identify the phone model.
+
+## Diagnostics and help
+
+`./pixel-eub doctor` performs read-only checks for dependencies, ROM USB
+port permissions, fastboot location, cache permissions/free space and optional
+Linux port-recovery tools. Use `--fastboot PATH` or `--cache-dir PATH` to check
+custom paths. No phone is opened or modified. Missing pyserial, denied port
+permissions or an unusable cache return exit code 1; missing optional tools or
+an unplugged phone do not. `./pixel-eub -h` lists all command options;
+`./pixel-eub boot -h` shows just recovery options.
 
 ## Compatibility
 
@@ -200,6 +189,22 @@ always expose enough metadata to identify their intended SoC.
 `--dry-run` prepares and inspects sources without opening USB; it requires an
 explicit model. `unpack bootloader.img` inspects an FBPK and verifies stored
 nonzero CRC32 values without extracting files.
+
+### Experimental panic continuation
+
+With `--override`, `irom_booting_failure` after a completed upload
+offers `Continue uploading despite the ROM panic? [YES/NO] (NO):`.
+Explicit `YES` sends the remaining **experimental host-ordered chain without
+new ROM requests or C**: after BL1, PBL is sent immediately. The plan is shown
+before confirmation. Empty input, NO, other answers or EOF cancel. The experimental host
+order has no confirmed hardware validation; the phone may reject or ignore the data.
+PBL uses EPBL (plus EPBB when split); later images use header/body slices.
+Optional images are included only by matching signed tags. The prompt is also offered when a matched USB reconnect prints panic diagnostics without a
+fresh ROM identity: it warns and uses the previously verified session identity
+only after YES. Any fresh identity is checked, and a changed identity stops
+the attempt. Header failures and NAK remain fatal;
+without `--override`, iROM failure is also fatal. Final fastboot verification
+remains required for success.
 
 ## Linux port access
 
