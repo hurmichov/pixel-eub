@@ -17,7 +17,10 @@ from logs. Do not upload firmware or device backups.
   use a fixed release and pinned digest.
 - ZIP/FBPK readers validate sizes, ranges and stored checksums. These checks
   do not replace signatures verified by the phone.
-- `--override` only permits confirmed model/SoC metadata mismatches. It must
+- `--override` permits confirmed model/SoC metadata mismatches and an explicitly
+  confirmed experimental host-ordered continuation after `irom_booting_failure`.
+  Forced continuation omits ROM request/C gating; it does not establish acceptance.
+  It must
   not bypass archive integrity, a changed phone identity, unknown ROM chips,
   or a ROM-reported signature/rollback failure.
 - On Linux, automatic port recovery may invoke `sudo setfacl` and

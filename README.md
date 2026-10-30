@@ -2,6 +2,18 @@
 
 English · [Русский](README.ru.md)
 
+Beta 4: with `--override`, `irom_booting_failure` after a completed upload
+offers `Continue uploading despite the ROM panic? [YES/NO] (NO):`.
+Explicit `YES` sends the remaining **experimental host-ordered chain without
+new ROM requests or C**: after BL1, PBL is sent immediately. The plan is shown
+before confirmation. Empty input, NO, other answers or EOF cancel. The host
+order is not hardware-validated; the phone may reject or ignore the data.
+PBL uses EPBL (plus EPBB when split); later images use header/body slices.
+Optional images are included only by matching signed tags. Across reconnects,
+the same ROM identity is still required. Header failures and NAK remain fatal;
+without `--override`, iROM failure is also fatal. Final fastboot verification
+remains required for success.
+
 Beta 2 adds `./pixel-eub doctor`: read-only checks for dependencies, ROM USB
 port permissions, fastboot location, cache permissions/free space and optional
 Linux port-recovery tools. Use `--fastboot PATH` or `--cache-dir PATH` to check

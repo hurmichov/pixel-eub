@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0b4 — 2026-10-30
+
+- With `--override`, `irom_booting_failure` after a completed upload offers
+  `Continue uploading despite the ROM panic? [YES/NO] (NO):`.
+- Explicit YES selects an experimental host-ordered chain: after BL1, send
+  PBL immediately and then the remaining stages without ROM requests or C.
+  The plan is printed and payloads validated before confirmation.
+- Preserve forced-chain progress over USB reconnects, verifying the same ROM
+  identity before resuming. Empty/invalid input, NO and EOF cancel.
+- Without override, panic remains terminal. Header failures and NAK still stop;
+  forced uploads are not proof that the phone accepted or executed an image.
+
 ## 1.0.0b3 — 2026-10-30
 
 - Consolidate top-level help into one list of unique command options, with
