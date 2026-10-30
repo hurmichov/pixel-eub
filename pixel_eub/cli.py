@@ -525,7 +525,7 @@ def main(argv=None) -> int:
                 )
                 print(f"{model.name:18} {model.codename:11} {model.soc:9} {status}")
             print(
-                "This implementation is not hardware-validated. ROM signatures and anti-rollback still apply."
+                "USB connection and image uploads tested on one Pixel 6a (user-reported); successful fastboot recovery is unconfirmed. ROM signatures and anti-rollback still apply."
             )
         elif args.command == "doctor":
             return diagnose(args.cache_dir, args.fastboot)

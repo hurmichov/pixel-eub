@@ -1,6 +1,6 @@
 """Pixel EUB recovery. Firmware is never bundled or executed on the host."""
 
-__version__ = "1.0.0b5"
+__version__ = "1.0.0"
 
 
 class EubError(Exception):
