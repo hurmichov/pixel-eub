@@ -1,6 +1,6 @@
 import struct
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from pixel_eub import EubError
 from pixel_eub.images import Sources
@@ -139,6 +139,154 @@ class ProtocolTests(unittest.TestCase):
                     "zuma",
                     report=lambda _: None,
                 )
+
+    def panic_sources(self):
+        return Sources(
+            [
+                {
+                    "bl1": signed("APBL"),
+                    "pbl": signed("EPBL", b"pbl"),
+                    "bl2": signed("BL2", b"bl2"),
+                    "abl": signed("ABL", b"abl"),
+                    "bl31": signed("BL31", b"bl31"),
+                }
+            ],
+            "gs201",
+        )
+
+    def test_confirmed_panic_sends_pbl_and_rest_without_new_request_or_c(self):
+        sources, session = self.panic_sources(), Session()
+        link = FakeLink([b"eub:req:09855001:BL1\nC", b"irom_booting_failure:123\n"])
+        confirm, logs = Mock(), []
+        with self.assertRaises(OSError):
+            serve(
+                link,
+                sources,
+                session,
+                "gs201",
+                confirm_panic=confirm,
+                report=logs.append,
+            )
+        expected = ["BL1", "EPBL", "BL2", "BL2B", "ABL", "ABLB", "BL31", "BL3B"]
+        self.assertEqual(session.sent, expected)
+        self.assertEqual(
+            link.output, b"".join(frame(sources.payload(s)) for s in expected)
+        )
+        self.assertEqual(session.forced_pending, [])
+        confirm.assert_called_once()
+        self.assertTrue(any("no ROM request/C" in line for line in logs))
+
+    def test_panic_decline_keeps_only_original_bl1_upload(self):
+        from pixel_eub.cli import confirm_rom_panic
+
+        for answer in ("NO", "", "y", None):
+            with self.subTest(answer=answer):
+                sources, session = self.panic_sources(), Session()
+                link = FakeLink(
+                    [b"eub:req:09855001:BL1\nC", b"irom_booting_failure:123\n"]
+                )
+                with (
+                    patch(
+                        "builtins.input",
+                        side_effect=EOFError if answer is None else None,
+                        return_value=answer,
+                    ),
+                    patch("builtins.print"),
+                    self.assertRaisesRegex(EubError, "cancelled"),
+                ):
+                    serve(
+                        link,
+                        sources,
+                        session,
+                        "gs201",
+                        confirm_panic=confirm_rom_panic,
+                        report=lambda _: None,
+                    )
+                self.assertEqual(link.output, frame(sources.payload("BL1")))
+                self.assertIsNone(session.forced_pending)
+
+    def test_forced_chain_reconnect_requires_same_rom_identity(self):
+        sources, session = self.panic_sources(), Session()
+        first = FakeLink([b"eub:req:09855001:BL1\nC", b"irom_booting_failure:123\n"])
+        original_write = first.write
+
+        def disconnect_before_bl2(data):
+            if len(session.sent) >= 2:
+                raise OSError(19, "No such device")
+            return original_write(data)
+
+        first.write = disconnect_before_bl2
+        with self.assertRaises(OSError):
+            serve(
+                first,
+                sources,
+                session,
+                "gs201",
+                confirm_panic=Mock(),
+                report=lambda _: None,
+            )
+        self.assertEqual(session.sent, ["BL1", "EPBL"])
+        wrong = FakeLink([b"exynos_usb_booting:eub:09855002\n"])
+        with self.assertRaisesRegex(EubError, "different phone"):
+            serve(
+                wrong,
+                sources,
+                session,
+                "gs201",
+                confirm_panic=Mock(),
+                report=lambda _: None,
+            )
+        self.assertFalse(wrong.output)
+        resumed = FakeLink([b"exynos_usb_booting:eub:09855001\n"])
+        with self.assertRaises(OSError):
+            serve(
+                resumed,
+                sources,
+                session,
+                "gs201",
+                confirm_panic=Mock(),
+                report=lambda _: None,
+            )
+        self.assertEqual(session.forced_pending, [])
+        self.assertEqual(
+            resumed.output,
+            b"".join(
+                frame(sources.payload(s))
+                for s in ["BL2", "BL2B", "ABL", "ABLB", "BL31", "BL3B"]
+            ),
+        )
+
+    def test_explicit_rejections_still_stop_with_panic_override_callback(self):
+        for message in (b"bl1 header fail\n", b"eub:nak:09855001:BL1\n"):
+            link = FakeLink([b"eub:req:09855001:BL1\nC", message])
+            confirm = Mock()
+            with self.assertRaisesRegex(EubError, "ROM rejected"):
+                serve(
+                    link,
+                    self.panic_sources(),
+                    Session(),
+                    "gs201",
+                    confirm_panic=confirm,
+                    report=lambda _: None,
+                )
+            confirm.assert_not_called()
+
+    def test_panic_before_completed_upload_cannot_start_forced_chain(self):
+        confirm = Mock()
+        link = FakeLink(
+            [b"exynos_usb_booting:eub:09855001\nirom_booting_failure:123\n"]
+        )
+        with self.assertRaisesRegex(EubError, "no completed"):
+            serve(
+                link,
+                self.panic_sources(),
+                Session(),
+                "gs201",
+                confirm_panic=confirm,
+                report=lambda _: None,
+            )
+        self.assertFalse(link.output)
+        confirm.assert_not_called()
 
     def test_probe_does_not_send_payload(self):
         link = FakeLink([b"eub:req:09865001:BL1\nC"])

@@ -291,6 +291,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("write timed out", errors)
 
+    def test_only_override_enables_rom_panic_confirmation(self):
+        from pixel_eub.cli import confirm_rom_panic
+        from pixel_eub.images import Sources
+
+        for override in (False, True):
+            with self.subTest(override=override):
+
+                def uploaded(
+                    _link, _sources, session, _soc, override=override, **kwargs
+                ):
+                    self.assertIs(
+                        kwargs["confirm_panic"], confirm_rom_panic if override else None
+                    )
+                    session.attempts["BL1"] = 1
+                    session.sent.append("BL1")
+
+                fb = Mock()
+                fb.verify.return_value = "RECOVERED"
+                sequence = [Port("first")]
+                if override:
+                    sequence.append(Port("first"))
+                sequence.append(NoDevice("not found"))
+                with (
+                    patch("pixel_eub.cli.probe", return_value="09865001"),
+                    patch("pixel_eub.cli.prepare", return_value=Sources([], "zuma")),
+                    patch("pixel_eub.cli.serve", side_effect=uploaded),
+                    patch("pixel_eub.cli.Fastboot", return_value=fb),
+                    patch("pixel_eub.cli.find_port", side_effect=sequence),
+                    patch(
+                        "pixel_eub.cli.open_port",
+                        side_effect=lambda *_a, **_kw: FakeLink([]),
+                    ),
+                    patch("builtins.input") as prompt,
+                ):
+                    args = ["boot", "--device", "husky", "--reconnect-wait", "0.01"]
+                    if override:
+                        args.append("--override")
+                    code, _, errors = self.run_cli(*args)
+                self.assertEqual((code, errors), (0, ""))
+                prompt.assert_not_called()
+
 
 class TransportTests(unittest.TestCase):
     @unittest.skipIf(__import__("os").name == "nt", "POSIX termios error")
