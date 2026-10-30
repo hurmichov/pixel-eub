@@ -465,6 +465,7 @@ def boot(args):
                     verbose=args.verbose,
                     report=lambda message: print(message, flush=True),
                     confirm_panic=confirm_rom_panic if args.override else None,
+                    allow_cached_identity=args.override and connection > 0,
                 )
             except OSError as exc:
                 if not disconnected(exc):

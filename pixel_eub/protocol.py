@@ -125,6 +125,7 @@ def serve(
     verbose=False,
     report=print,
     confirm_panic=None,
+    allow_cached_identity=False,
 ):
     """Serve one connection. A quiet/disconnected port is never proof of fastboot."""
     reader, pending = MessageReader(), None
@@ -171,10 +172,21 @@ def serve(
                 # Reconnects still require the same phone's fresh ROM identity.
                 upload_forced()
             if message.lower().startswith("irom_booting_failure") and confirm_panic:
-                if not session.serial or not identity_logged:
+                if (
+                    not session.serial
+                    or not session.soc
+                    or (not identity_logged and not allow_cached_identity)
+                ):
                     raise EubError(
                         "ROM panic before identity verification; refusing forced uploads."
                     )
+                if not identity_logged:
+                    report(
+                        "WARNING: reconnected port has not repeated its ROM identity; "
+                        f"using cached session identity {session.serial} ({session.soc}) "
+                        "for the explicitly confirmed experimental continuation."
+                    )
+                    sources.use_soc(session.soc)
                 remaining = (
                     session.forced_pending
                     if session.forced_pending is not None
