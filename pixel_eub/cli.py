@@ -1,6 +1,7 @@
 """Command-line entry point and recovery orchestration."""
 
 import argparse
+import copy
 import http.client
 import math
 import subprocess
@@ -57,14 +58,46 @@ class FullHelpParser(CommandParser):
         overview = super().format_help()
         if not self.command_parsers:
             return overview
-        details = "\n".join(
-            command.format_help() for command in self.command_parsers.values()
-        )
+        options, positionals = {}, []
+        for name, command in self.command_parsers.items():
+            for action in command._actions:
+                if isinstance(action, argparse._HelpAction):
+                    continue
+                if not action.option_strings:
+                    positional = copy.copy(action)
+                    positional.help = f"{action.help} [command: {name}]"
+                    positionals.append(positional)
+                    continue
+                key = tuple(action.option_strings)
+                names = options[key][1] if key in options else []
+                options[key] = (copy.copy(action), [*names, name])
+
+        shared_help = {
+            "--device": "model name/codename; builds/fetch: required; boot: optional (probe ROM and select model)",
+            "--build": "factory build ID; builds/fetch: latest by default; boot: optional additional factory download",
+            "--cache-dir": "download/cache directory (or PIXEL_EUB_CACHE); doctor checks this path",
+            "--fastboot": "Platform-Tools fastboot executable; doctor only locates it",
+        }
+        formatter = argparse.ArgumentDefaultsHelpFormatter(self.prog)
+        formatter.start_section("Command options (place after the command)")
+        for action, names in options.values():
+            action.help = shared_help.get(action.option_strings[0], action.help)
+            action.help += f" [commands: {', '.join(names)}]"
+            # These defaults differ between commands and are explained above.
+            if action.dest in ("device", "build"):
+                action.default = argparse.SUPPRESS
+            formatter.add_argument(action)
+        formatter.end_section()
+        if positionals:
+            formatter.start_section("Command positional arguments")
+            formatter.add_arguments(positionals)
+            formatter.end_section()
         return (
             overview
-            + "\nCommand arguments (place options after the command):\n"
-            + 'Example: pixel-eub boot --device "Pixel 7 Pro" --pack auto --wait\n\n'
-            + details
+            + "\n"
+            + formatter.format_help()
+            + '\nExample: pixel-eub boot --device "Pixel 7 Pro" --pack auto --wait\n'
+            + "Focused help: pixel-eub COMMAND -h\n"
         )
 
 
