@@ -1,1 +1,49 @@
-
+name: Bug report
+description: Report a reproducible pixel-eub failure
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Redact serial numbers and personal paths. Do not upload firmware, device backups, or credentials.
+        Read the README's compatibility table before reporting unsupported hardware.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: Output of pixel-eub --version, plus commit if known
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone model and selected recovery pack
+      placeholder: Pixel 7 Pro (cheetah), gs201
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Python version
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command and reproduction steps
+      description: Include --override and port-recovery options if used.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted output
+      description: Include the failing phase and stage. Remove personal identifiers.
+      render: text
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result and actual phone state
+      description: Distinguish a black screen, ROM USB, bootloader fastboot, and fastbootd.
+    validations:
+      required: true
