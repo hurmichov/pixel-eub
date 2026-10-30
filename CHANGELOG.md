@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0b1 — 2026-10-30
+
+First GitHub prerelease: **v1.0 beta**, tagged `v1.0.0-beta.1`.
+
+- Publish a Python wheel, source distribution, portable source ZIP, and
+  SHA-256 checksums.
+- Update the CLI and package version to `1.0.0b1` (Python's beta notation).
+- Retain the recovery features described below; no recovery-protocol changes.
+
+This beta remains experimental. Synthetic tests and CI do not establish
+hardware compatibility or guarantee recovery of a phone. Recovery firmware
+is downloaded separately and is not included in the release artifacts.
+
 ## 0.1.0 — 2026-10-30
 
 Initial public source preparation. This release is experimental and has not
