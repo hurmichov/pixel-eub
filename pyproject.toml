@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixel-eub"
+version = "0.1.0"
+description = "Request-driven Tensor Pixel ROM Recovery to fastboot utility"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE.md"]
+authors = [{name = "pixel-eub contributors"}]
+keywords = ["pixel", "tensor", "eub", "usb", "recovery", "fastboot"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+dependencies = ["pyserial>=3.5,<4"]
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2", "ruff>=0.17,<0.18"]
+
+[project.urls]
+Repository = "https://github.com/hurmichov/pixel-eub"
+Issues = "https://github.com/hurmichov/pixel-eub/issues"
+Changelog = "https://github.com/hurmichov/pixel-eub/blob/main/CHANGELOG.md"
+
+[project.scripts]
+pixel-eub = "pixel_eub.cli:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["pixel_eub*"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]

@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Run pixel-eub from this checkout with Python 3.10+, without a venv."""
+
+import sys
+
+if sys.version_info < (3, 10):
+    print("pixel-eub: Python 3.10 or newer is required.", file=sys.stderr)
+    raise SystemExit(1)
+
+from pixel_eub.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
