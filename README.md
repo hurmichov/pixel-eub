@@ -9,8 +9,11 @@ new ROM requests or C**: after BL1, PBL is sent immediately. The plan is shown
 before confirmation. Empty input, NO, other answers or EOF cancel. The host
 order is not hardware-validated; the phone may reject or ignore the data.
 PBL uses EPBL (plus EPBB when split); later images use header/body slices.
-Optional images are included only by matching signed tags. Across reconnects,
-the same ROM identity is still required. Header failures and NAK remain fatal;
+Optional images are included only by matching signed tags. Beta 5 also offers
+the prompt when a matched USB reconnect prints panic diagnostics without a
+fresh ROM identity: it warns and uses the previously verified session identity
+only after YES. Any fresh identity is checked, and a changed identity stops
+the attempt. Header failures and NAK remain fatal;
 without `--override`, iROM failure is also fatal. Final fastboot verification
 remains required for success.
 

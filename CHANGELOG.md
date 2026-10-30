@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0b5 — 2026-10-30
+
+- Fix missing panic confirmation after USB re-enumeration when the ROM prints
+  hex diagnostics and `irom_booting_failure::` without repeating its identity.
+- On a CLI-matched reconnect with `--override`, offer continuation using the
+  previously verified session identity, with an explicit cached-identity warning.
+  The YES/NO prompt still occurs before any forced upload.
+- A fresh identity, when present, is still checked and a different phone is
+  rejected. Initial/unmatched protocol connections cannot reuse identity.
+- Reproduce the Pixel 6a log in CLI tests, including both YES and NO responses.
+
 ## 1.0.0b4 — 2026-10-30
 
 - With `--override`, `irom_booting_failure` after a completed upload offers
