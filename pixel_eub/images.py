@@ -274,3 +274,42 @@ class Sources:
                 raise EubError(f"{stage} image has no code body.")
             return data[HEADER:]
         return data
+
+    def panic_chain(self, sent: list[str]) -> list[str]:
+        """Experimental host order; never used by normal request-driven uploads."""
+        chain = ["BL1", "EPBL"]
+        if self.split:
+            chain.append("EPBB")
+        chain += ["BL2", "BL2B"]
+        # Optional images are included only when a matching signed tag exists.
+        for stage, body in (
+            ("GCF", "GCFB"),
+            ("GSA1", None),
+            ("GSAF", None),
+            ("ABL", "ABLB"),
+            ("TZSW", "TZSB"),
+            ("LDFW", "LDFB"),
+            ("BL31", "BL3B"),
+        ):
+            if stage not in ("ABL", "BL31"):
+                tag = STAGES[stage][1]
+                if not any(
+                    image_tag(data) == tag
+                    for layer in self.layers
+                    for data in layer.values()
+                ):
+                    continue
+            chain.append(stage)
+            if body:
+                chain.append(body)
+        if not sent or sent[-1] not in chain:
+            raise EubError(
+                "Cannot choose a panic continuation: no completed chain stage."
+            )
+        remaining = chain[chain.index(sent[-1]) + 1 :]
+        if not remaining:
+            raise EubError("No boot-chain stages remain after the ROM panic.")
+        # Validate the whole plan before asking for or sending forced uploads.
+        for stage in remaining:
+            self.payload(stage)
+        return remaining

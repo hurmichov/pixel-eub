@@ -228,7 +228,7 @@ def parser():
     boot.add_argument(
         "--override",
         action="store_true",
-        help="allow model/SoC incompatibilities only after an explicit YES/NO confirmation",
+        help="review model/SoC mismatches; on irom_booting_failure offer an experimental forced chain without ROM requests/C; each action requires YES/NO confirmation",
     )
     boot.add_argument(
         "--build",
@@ -361,6 +361,22 @@ def prepare(args, model, cache, compatibility=None):
     return Sources(layers, model.soc, args.epbl)
 
 
+def confirm_rom_panic():
+    print(
+        "WARNING: experimental forced boot chain. Remaining images will be sent "
+        "without ROM requests or clear-to-send C. The phone may reject or ignore them.",
+        flush=True,
+    )
+    try:
+        answer = input("Continue uploading despite the ROM panic? [YES/NO] (NO): ")
+    except EOFError as exc:
+        raise EubError(
+            "Panic continuation cancelled: explicit YES was not received."
+        ) from exc
+    if answer.strip().upper() != "YES":
+        raise EubError("Panic continuation cancelled: explicit YES was not received.")
+
+
 def boot(args):
     if args.build and (not args.device or args.image):
         raise EubError("--build requires --device and cannot be combined with --image.")
@@ -448,6 +464,7 @@ def boot(args):
                     checksum=args.checksum,
                     verbose=args.verbose,
                     report=lambda message: print(message, flush=True),
+                    confirm_panic=confirm_rom_panic if args.override else None,
                 )
             except OSError as exc:
                 if not disconnected(exc):

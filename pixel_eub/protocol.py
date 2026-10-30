@@ -74,6 +74,7 @@ class Session:
     acknowledged: list[str] = field(default_factory=list)
     attempts: dict[str, int] = field(default_factory=dict)
     compatibility: CompatibilityOverride | None = None
+    forced_pending: list[str] | None = None
 
     def note_identity(self, serial: str, expected_soc: str | None):
         soc = soc_for(serial)
@@ -123,11 +124,36 @@ def serve(
     checksum="ffff",
     verbose=False,
     report=print,
+    confirm_panic=None,
 ):
     """Serve one connection. A quiet/disconnected port is never proof of fastboot."""
     reader, pending = MessageReader(), None
     started = last = time.monotonic()
     heard, nudged, sent_here, identity_logged = False, False, False, False
+
+    def upload(stage, forced=False):
+        if not session.serial:
+            raise EubError("Refusing upload before ROM identity is verified.")
+        session.attempts[stage] = session.attempts.get(stage, 0) + 1
+        if session.attempts[stage] > 5:
+            raise EubError(
+                f"ROM repeated {stage} more than five times; stopping retry loop."
+            )
+        payload = sources.payload(stage)
+        label = "Experimental forced upload (no ROM request/C)" if forced else "Sending"
+        report(f"{label} {stage}: {len(payload)} bytes")
+        write_all(link, frame(payload, checksum))
+        session.sent.append(stage)
+        report(f"Uploaded {stage}: {len(payload)} bytes")
+
+    def upload_forced():
+        nonlocal last, sent_here
+        while session.forced_pending:
+            stage = session.forced_pending[0]
+            upload(stage, forced=True)
+            session.forced_pending.pop(0)
+            last, sent_here = time.monotonic(), True
+
     while True:
         data = link.read(4096)
         if data:
@@ -142,6 +168,30 @@ def serve(
                 if not identity_logged:
                     report(f"ROM identity verified: {serial} ({session.soc})")
                     identity_logged = True
+                # Reconnects still require the same phone's fresh ROM identity.
+                upload_forced()
+            if message.lower().startswith("irom_booting_failure") and confirm_panic:
+                if not session.serial or not identity_logged:
+                    raise EubError(
+                        "ROM panic before identity verification; refusing forced uploads."
+                    )
+                remaining = (
+                    session.forced_pending
+                    if session.forced_pending is not None
+                    else sources.panic_chain(session.sent)
+                )
+                if not remaining:
+                    raise EubError(
+                        "ROM panic after the forced chain ended; fastboot is not confirmed."
+                    )
+                report(f"WARNING: ROM PANIC: {message}")
+                report("Experimental remaining chain: " + " -> ".join(remaining))
+                confirm_panic()
+                session.forced_pending = remaining
+                pending = None
+                started = last = time.monotonic()
+                upload_forced()
+                continue
             if "header fail" in message.lower() or message.lower().startswith(
                 ("eub:nak:", "irom_booting_failure")
             ):
@@ -152,6 +202,8 @@ def serve(
                 r"eub:req:([^:]+):([A-Za-z0-9_]+)", message, re.IGNORECASE
             )
             if request:
+                if session.forced_pending is not None:
+                    continue  # The user explicitly selected the host-driven chain.
                 stage = request[2].upper()
                 if pending and pending != stage:
                     raise EubError(
@@ -161,19 +213,8 @@ def serve(
                     report(f"ROM requests {stage}")
                 pending = stage
             elif message == "C" and pending:
-                if not session.serial:
-                    raise EubError("Refusing upload before ROM identity is verified.")
                 stage, pending = pending, None
-                session.attempts[stage] = session.attempts.get(stage, 0) + 1
-                if session.attempts[stage] > 5:
-                    raise EubError(
-                        f"ROM repeated {stage} more than five times; stopping retry loop."
-                    )
-                payload = sources.payload(stage)
-                report(f"Sending {stage}: {len(payload)} bytes")
-                write_all(link, frame(payload, checksum))
-                session.sent.append(stage)
-                report(f"Uploaded {stage}: {len(payload)} bytes")
+                upload(stage)
                 last, sent_here = time.monotonic(), True
             elif message.lower().startswith("eub:ack:"):
                 stage = message.rsplit(":", 1)[-1].upper()
