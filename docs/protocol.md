@@ -36,13 +36,29 @@ signature failures remain terminal.
 | `eub:ack:SERIAL:STAGE` | Record ACK, continue listening for signature failures |
 | `eub:nak:...` | Stop with failure |
 | `STAGE header fail` | Stop with signature/anti-rollback diagnostic |
-| `irom_booting_failure:...` | Stop with failure |
+| `irom_booting_failure:...` | Stop; with `--override`, offer confirmed experimental forced chain |
 
 CR, LF and NUL delimit text messages. Text may be split across reads. Duplicate
 requests before `C` are coalesced; after uploading, an explicitly repeated
 request can be served up to five times per stage. Unknown stages fail closed.
 A newline nudge is sent once after 1.5 s only if the connection has received
 no bytes. It is never inserted into an expected upload.
+
+### Experimental panic continuation (beta 4)
+
+Only with `--override`, an iROM panic after a completed upload can be followed
+by an explicit YES. The host then sends the remaining plan without requests/C.
+This is an experimental host policy, not a documented ROM recovery handshake.
+The order is BL1, EPBL (plus EPBB when split), BL2/BL2B, optional GCF/GCFB,
+optional GSA1, optional GSAF, ABL/ABLB, optional TZSW/TZSB, optional LDFW/LDFB,
+BL31/BL3B. Resume after the last completed stage; no synthetic DPM is inserted.
+All remaining payloads are validated before prompting. Optional images are
+selected only if their signed tags exist. Missing required images stop the
+attempt. Across disconnects, resume only after verifying fresh identity for
+the same ROM. A partial write retries that stage, with the existing limit.
+NO, invalid/empty input and EOF cancel. Header failures and NAK remain terminal.
+Forced uploads do not mean the ROM accepted or executed the chain; final
+fastboot product verification still determines success.
 
 ## Host upload
 
