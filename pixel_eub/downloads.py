@@ -17,7 +17,7 @@ from . import EubError
 INDEX_URL = "https://developers.google.com/android/images"
 PACK_URL = "https://github.com/JoshuaDoes/tensor-usbdl/releases/download/020/tensor-usbdl-v0.2.0.zip"
 PACK_SHA256 = "15dbd6406c1c74c2cd7104388ab745f3605d026ede6fc6c61c754ddb30b194b2"
-USER_AGENT = "pixel-eub/1.0.0b1"
+USER_AGENT = "pixel-eub/1.0.0b2"
 
 
 def default_cache() -> Path:

@@ -13,6 +13,7 @@ from urllib.error import URLError
 
 from . import EubError, __version__
 from .compatibility import CompatibilityOverride
+from .doctor import diagnose
 from .downloads import (
     INDEX_URL,
     PACK_SHA256,
@@ -41,6 +42,30 @@ from .transport import (
     open_port,
     ports,
 )
+
+
+class CommandParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("formatter_class", argparse.ArgumentDefaultsHelpFormatter)
+        super().__init__(*args, **kwargs)
+
+
+class FullHelpParser(CommandParser):
+    command_parsers = None
+
+    def format_help(self):
+        overview = super().format_help()
+        if not self.command_parsers:
+            return overview
+        details = "\n".join(
+            command.format_help() for command in self.command_parsers.values()
+        )
+        return (
+            overview
+            + "\nCommand arguments (place options after the command):\n"
+            + 'Example: pixel-eub boot --device "Pixel 7 Pro" --pack auto --wait\n\n'
+            + details
+        )
 
 
 def positive(value):
@@ -78,17 +103,37 @@ def factory_options(parser):
 
 
 def parser():
-    root = argparse.ArgumentParser(
+    root = FullHelpParser(
         prog="pixel-eub",
         description="Boot compatible Tensor Pixels from ROM Recovery into fastboot using signed stages in RAM.",
     )
-    root.add_argument("--version", action="version", version=__version__)
-    commands = root.add_subparsers(dest="command", required=True)
+    root.add_argument(
+        "--version", action="version", version=__version__, help="show program version"
+    )
+    commands = root.add_subparsers(
+        dest="command", required=True, parser_class=CommandParser
+    )
+    root.command_parsers = commands.choices
     commands.add_parser(
         "models", help="model aliases and actual recovery-pack availability"
     )
     detect = commands.add_parser("detect", help="find Pixel ROM Recovery USB CDC ports")
     detect.add_argument("--all", action="store_true", help="include other serial ports")
+    doctor = commands.add_parser(
+        "doctor",
+        help="diagnose dependencies, USB permissions and cache without changes",
+    )
+    doctor.add_argument(
+        "--fastboot",
+        default="fastboot",
+        help="Platform-Tools fastboot executable to locate",
+    )
+    doctor.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=default_cache(),
+        help="cache directory to check (or PIXEL_EUB_CACHE)",
+    )
     builds = commands.add_parser(
         "builds", help="list official factory builds and SHA-256"
     )
@@ -107,7 +152,12 @@ def parser():
     boot.add_argument(
         "--wait", action="store_true", help="wait for ROM Recovery USB to appear"
     )
-    boot.add_argument("--wait-timeout", type=positive, default=60)
+    boot.add_argument(
+        "--wait-timeout",
+        type=positive,
+        default=60,
+        help="seconds to wait for ROM USB when --wait is enabled",
+    )
     boot.add_argument(
         "--reconnect-wait",
         type=positive,
@@ -120,7 +170,12 @@ def parser():
         default=20,
         help="seconds to confirm fastboot",
     )
-    boot.add_argument("--idle-timeout", type=positive, default=15)
+    boot.add_argument(
+        "--idle-timeout",
+        type=positive,
+        default=15,
+        help="seconds without ROM activity before the serial session times out",
+    )
     boot.add_argument(
         "--no-port-recovery",
         action="store_true",
@@ -146,13 +201,20 @@ def parser():
         "--build",
         help="also fetch a specific official factory ZIP (or latest); requires --device",
     )
-    boot.add_argument("--refresh", action="store_true")
+    boot.add_argument(
+        "--refresh", action="store_true", help="refresh the cached factory index"
+    )
     boot.add_argument(
         "--epbl",
         choices=("full", "split"),
         help="override EPBL slicing for a known chip",
     )
-    boot.add_argument("--checksum", choices=("ffff", "sum16"), default="ffff")
+    boot.add_argument(
+        "--checksum",
+        choices=("ffff", "sum16"),
+        default="ffff",
+        help="upload checksum: constant ffff or sum16 byte sum",
+    )
     boot.add_argument(
         "--fastboot", default="fastboot", help="Platform-Tools fastboot executable"
     )
@@ -170,12 +232,16 @@ def parser():
         action="store_true",
         help="prepare sources without opening USB; requires --device",
     )
-    boot.add_argument("--verbose", action="store_true")
+    boot.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print raw ROM messages, including the device serial number",
+    )
     cache_options(boot)
     unpack = commands.add_parser(
         "unpack", help="inspect a raw FBPK bootloader, verify CRC32"
     )
-    unpack.add_argument("image", type=Path)
+    unpack.add_argument("image", type=Path, help="path to a raw FBPK bootloader image")
     return root
 
 
@@ -410,6 +476,8 @@ def main(argv=None) -> int:
             print(
                 "This implementation is not hardware-validated. ROM signatures and anti-rollback still apply."
             )
+        elif args.command == "doctor":
+            return diagnose(args.cache_dir, args.fastboot)
         elif args.command == "detect":
             found = ports(args.all)
             for port in found:
