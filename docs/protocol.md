@@ -54,8 +54,14 @@ optional GSA1, optional GSAF, ABL/ABLB, optional TZSW/TZSB, optional LDFW/LDFB,
 BL31/BL3B. Resume after the last completed stage; no synthetic DPM is inserted.
 All remaining payloads are validated before prompting. Optional images are
 selected only if their signed tags exist. Missing required images stop the
-attempt. Across disconnects, resume only after verifying fresh identity for
-the same ROM. A partial write retries that stage, with the existing limit.
+attempt. A fresh identity is verified before automatic resumption across
+disconnects. In beta 5, a CLI-matched reconnect that emits only an iROM panic
+can instead offer a new confirmation using the cached, previously verified
+session identity. A warning identifies that fallback. USB matching uses the
+original serial, then location, then node path if neither identifier exists;
+node-path matching alone cannot prove ROM identity. Initial/unmatched connections
+cannot use this fallback, and any fresh changed identity remains fatal.
+A partial write retries that stage, with the existing limit.
 NO, invalid/empty input and EOF cancel. Header failures and NAK remain terminal.
 Forced uploads do not mean the ROM accepted or executed the chain; final
 fastboot product verification still determines success.
