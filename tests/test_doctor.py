@@ -86,3 +86,17 @@ class DoctorTests(unittest.TestCase):
             "raw ROM messages",
         ):
             self.assertIn(text, help_text)
+
+    def test_top_level_help_lists_shared_options_once_and_preserves_command_help(self):
+        root = parser()
+        before = root.command_parsers["builds"].format_help()
+        help_text = root.format_help()
+        self.assertEqual(help_text.count("usage:"), 1)
+        self.assertEqual(help_text.count("\noptions:"), 1)
+        self.assertEqual(help_text.count("--cache-dir CACHE_DIR"), 1)
+        self.assertEqual(help_text.count("--offline"), 1)
+        self.assertIn(
+            "[commands: doctor, builds, fetch, boot]", " ".join(help_text.split())
+        )
+        self.assertIn("builds/fetch: latest by default", help_text)
+        self.assertEqual(root.command_parsers["builds"].format_help(), before)
