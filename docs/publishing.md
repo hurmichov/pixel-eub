@@ -33,8 +33,9 @@ repository, pushes commits, publishes packages, or creates releases automaticall
    tests, a build, and an installed-wheel smoke check. Local Linux success
    does not establish that the other matrix jobs have passed on GitHub.
 
-Keep the initial description accurate: **experimental Tensor Pixel ROM
-Recovery tooling with request-driven serial uploads**. The compatibility table
+Keep the description accurate: **Tensor Pixel ROM Recovery tooling with
+request-driven serial uploads**. Describe the forced panic continuation as
+experimental. The compatibility table
 describes available image sources, not a guarantee that every Pixel can boot.
 
 ## Files and release artifacts
