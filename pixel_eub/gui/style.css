@@ -1,0 +1,152 @@
+/* Pixel-EUB GUI: dark, card-based layout on top of libadwaita. */
+
+.app-title {
+  font-weight: 800;
+  font-size: 1.15em;
+}
+
+.status-chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: alpha(currentColor, 0.08);
+}
+
+.status-dot {
+  font-size: 0.8em;
+}
+
+.status-dot.connected {
+  color: @success_color;
+}
+
+.status-dot.absent {
+  color: alpha(currentColor, 0.4);
+}
+
+.page-icon {
+  min-width: 64px;
+  min-height: 64px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+  color: white;
+}
+
+.page-title {
+  font-size: 1.9em;
+  font-weight: 800;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.hero-title {
+  font-size: 2.4em;
+  font-weight: 800;
+}
+
+.version-pill {
+  padding: 3px 14px;
+  border-radius: 999px;
+  background: alpha(currentColor, 0.1);
+}
+
+.tech-chip {
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid alpha(currentColor, 0.12);
+  background: alpha(currentColor, 0.03);
+}
+
+.thanks-icon {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 999px;
+  color: white;
+}
+
+.thanks-icon.blue {
+  background: #1e40af;
+}
+
+.thanks-icon.violet {
+  background: #6d28d9;
+}
+
+.thanks-icon.green {
+  background: #15803d;
+}
+
+.stage-chip {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-family: monospace;
+  background: alpha(currentColor, 0.08);
+}
+
+.stage-chip.requested {
+  background: alpha(@accent_bg_color, 0.25);
+}
+
+.stage-chip.sending,
+.stage-chip.forced {
+  background: alpha(@warning_bg_color, 0.35);
+}
+
+.stage-chip.uploaded {
+  background: alpha(@accent_bg_color, 0.55);
+}
+
+.stage-chip.acknowledged {
+  background: alpha(@success_bg_color, 0.6);
+}
+
+.result-card {
+  padding: 14px 18px;
+  border-radius: 12px;
+}
+
+.result-card.success {
+  background: alpha(@success_bg_color, 0.25);
+}
+
+.result-card.error {
+  background: alpha(@error_bg_color, 0.25);
+}
+
+.result-card.info {
+  background: alpha(@accent_bg_color, 0.2);
+}
+
+.log-view {
+  font-family: monospace;
+  font-size: 0.92em;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.check-ok {
+  color: @success_color;
+}
+
+.check-warn {
+  color: @warning_color;
+}
+
+.check-fail {
+  color: @error_color;
+}
+
+.check-info {
+  color: @accent_color;
+}
+
+.prompt-context {
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+button.pill.accent {
+  color: @accent_color;
+  background: alpha(@accent_bg_color, 0.15);
+}
