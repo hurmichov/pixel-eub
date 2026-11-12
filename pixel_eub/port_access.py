@@ -32,6 +32,10 @@ def tool(name):
     return path
 
 
+def graphical_session():
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
 def protected_pids():
     """Never terminate this process, its invoking shell, or their ancestors."""
     protected = {1, os.getpid()}
@@ -52,26 +56,44 @@ class PortAccessRecovery:
         self.attempted = set()
 
     def privileged(self, command, *, allowed=(0,)):
+        timeout, via_polkit = 60, False
         if os.geteuid() != 0:
-            prefix = [tool("sudo")]
-            if not sys.stdin.isatty():
-                prefix.append("-n")
-            command = prefix + ["--"] + command
+            pkexec = shutil.which("pkexec", path=SYSTEM_PATH)
+            if sys.stdin.isatty():
+                command = [tool("sudo"), "--"] + command
+            elif pkexec and graphical_session():
+                # No terminal (e.g. the GUI): polkit shows the desktop's own
+                # password dialog; this process never sees the password.
+                command = [pkexec] + command
+                timeout, via_polkit = 180, True
+            else:
+                command = [tool("sudo"), "-n", "--"] + command
         self.report("Port access: " + " ".join(command))
         try:
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=60, check=False
+                command, capture_output=True, text=True, timeout=timeout, check=False
             )
         except subprocess.TimeoutExpired as exc:
             raise EubError(
                 "Timed out obtaining administrator access to the Pixel ROM port."
             ) from exc
         if result.returncode not in allowed:
+            if via_polkit and result.returncode == 126:
+                raise EubError(
+                    "Administrator authentication was cancelled or denied; "
+                    "Pixel ROM port access was not changed."
+                )
+            if via_polkit and result.returncode == 127:
+                raise EubError(
+                    "No polkit authentication agent answered. Log in to a desktop "
+                    "session, run from a terminal for sudo, or fix the "
+                    "serial-group/udev permissions."
+                )
             detail = result.stderr.strip() or result.stdout.strip()
             raise EubError(
                 f"Cannot recover Pixel ROM port access: {detail or 'administrator command failed'}. "
-                "Run from an interactive terminal for sudo authentication, "
-                "or fix the serial-group/udev permissions."
+                "Run from an interactive terminal or a desktop session for "
+                "authentication, or fix the serial-group/udev permissions."
             )
         return result
 

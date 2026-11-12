@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,7 +168,12 @@ def open_port(port: Port, *, recovery=None):
             if error_number(exc) in ACCESS_ERRORS:
                 return recovery.recover(port, exc, _open_port_once)
         raise PortUnavailable(
-            f"Cannot open {port.device}: {exc}. Check serial-group permissions and whether ModemManager is using the port."
+            f"Cannot open {port.device}: {exc}. Check serial-group permissions and whether ModemManager is using the port"
+            + (
+                "; on Linux, --port-recovery can repair access."
+                if recovery is None and sys.platform == "linux"
+                else "."
+            )
         ) from exc
 
 

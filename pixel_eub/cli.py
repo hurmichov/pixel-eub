@@ -4,6 +4,7 @@ import argparse
 import copy
 import http.client
 import math
+import re
 import subprocess
 import sys
 import time
@@ -12,7 +13,8 @@ import zlib
 from pathlib import Path
 from urllib.error import URLError
 
-from . import EubError, __version__
+from . import EubError, __version__, usbinfo
+from .capture import Capture
 from .compatibility import CompatibilityOverride
 from .doctor import diagnose
 from .downloads import (
@@ -26,6 +28,7 @@ from .downloads import (
 from .images import (
     Sources,
     bounded_read,
+    inspect_file,
     load_bootloader,
     load_directory,
     load_recovery,
@@ -33,7 +36,7 @@ from .images import (
 )
 from .models import MODELS, choose_model, model_for, soc_for
 from .port_access import PortAccessRecovery
-from .protocol import Session, probe, serve
+from .protocol import MessageReader, Session, listen_after, probe, serve
 from .transport import (
     Fastboot,
     NoDevice,
@@ -101,6 +104,13 @@ class FullHelpParser(CommandParser):
         )
 
 
+def non_negative(value):
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise argparse.ArgumentTypeError("must be a finite number, 0 or more")
+    return number
+
+
 def positive(value):
     number = float(value)
     if not math.isfinite(number) or number <= 0:
@@ -152,6 +162,12 @@ def parser():
     )
     detect = commands.add_parser("detect", help="find Pixel ROM Recovery USB CDC ports")
     detect.add_argument("--all", action="store_true", help="include other serial ports")
+    detect.add_argument(
+        "--dump-usb",
+        type=Path,
+        metavar="DIR",
+        help="Linux: save the USB descriptors of found ports (read from sysfs)",
+    )
     doctor = commands.add_parser(
         "doctor",
         help="diagnose dependencies, USB permissions and cache without changes",
@@ -210,9 +226,21 @@ def parser():
         help="seconds without ROM activity before the serial session times out",
     )
     boot.add_argument(
+        "--port-recovery",
+        action="store_true",
+        help="Linux: on access failure, grant an ACL via sudo and SIGTERM processes holding the verified Pixel port",
+    )
+    boot.add_argument(
+        "--ack-timeout",
+        type=positive,
+        default=600,
+        help="seconds to wait for the ROM after an upload (GSA1/BL3B verification "
+        "can take minutes)",
+    )
+    boot.add_argument(
         "--no-port-recovery",
         action="store_true",
-        help="disable Linux Pixel-port permission repair and release of processes holding that port",
+        help="keep port recovery disabled (the default; overrides --port-recovery)",
     )
     boot.add_argument(
         "--image", type=Path, help="local factory ZIP or FBPK bootloader image"
@@ -256,6 +284,40 @@ def parser():
         help="select the target fastboot serial for the final check",
     )
     boot.add_argument(
+        "--dump-usb",
+        type=Path,
+        metavar="DIR",
+        help="research, Linux: save USB descriptors at every ROM connection "
+        "(passive sysfs read; contains the USB serial number)",
+    )
+    boot.add_argument(
+        "--listen-after-failure",
+        type=non_negative,
+        default=0,
+        metavar="SECONDS",
+        help="research: after irom_booting_failure keep reading for SECONDS and "
+        "report each repeated failure line; nothing is uploaded meanwhile",
+    )
+    boot.add_argument(
+        "--capture",
+        type=Path,
+        metavar="PATH",
+        help="research: record every ROM byte and upload (length, head, SHA-256) "
+        "with timestamps as JSON lines; PATH may be a folder",
+    )
+    boot.add_argument(
+        "--no-usb-check",
+        action="store_true",
+        help="send a BL1 without the signed USB-boot flag anyway (the ROM is "
+        "expected to reject it; the image only goes to RAM)",
+    )
+    boot.add_argument(
+        "--allow-dpm-first",
+        action="store_true",
+        help="Pixel 7/7 Pro/Fold: continue when the ROM asks for DPM before BL1 "
+        "(BL1 from internal storage; reported to end with GSA errors)",
+    )
+    boot.add_argument(
         "--allow-experimental",
         action="store_true",
         help="allow a sibling model's recovery pack",
@@ -275,6 +337,21 @@ def parser():
         "unpack", help="inspect a raw FBPK bootloader, verify CRC32"
     )
     unpack.add_argument("image", type=Path, help="path to a raw FBPK bootloader image")
+    inspect = commands.add_parser(
+        "inspect",
+        help="describe stage images, FBPK bootloaders or ZIPs: tag, USB-boot flag, SoC",
+    )
+    inspect.add_argument(
+        "files", type=Path, nargs="+", help="image, FBPK, factory ZIP or recovery pack"
+    )
+    gs101 = commands.add_parser("gs101", help="GS101 modified-stage Linux recovery")
+    gs101.add_argument("--device", required=True, choices=("bluejay", "oriole", "raven"))
+    gs101.add_argument("--profile", required=True, type=Path, help="prepared directory for the selected device")
+    gs101.add_argument("--check-profile", action="store_true", help="check profile without opening USB")
+    gs101.add_argument("--acknowledge-risk", action="store_true", help="acknowledge modified stages and recovery risks")
+    commands.add_parser(
+        "gui", help="open the GTK4 graphical interface (needs PyGObject/libadwaita)"
+    )
     return root
 
 
@@ -358,7 +435,116 @@ def prepare(args, model, cache, compatibility=None):
         raise EubError(
             "No boot stages selected; provide --image, --dir or --pack auto."
         )
-    return Sources(layers, model.soc, args.epbl)
+    if args.no_usb_check:
+        print(
+            "WARNING: --no-usb-check: a BL1 without the signed USB-boot flag will be "
+            "sent. The ROM still verifies it and is expected to answer 'header fail'; "
+            "the flag cannot be added without breaking the signature.",
+            flush=True,
+        )
+    return Sources(layers, model.soc, args.epbl, usb_check=not args.no_usb_check)
+
+
+class UsbDumper:
+    """Save descriptors per connection; a failure never stops recovery."""
+
+    def __init__(self, folder):
+        self.folder = folder
+        self.previous = None
+        self.count = 0
+
+    def __call__(self, port):
+        if not self.folder:
+            return
+        self.count += 1
+        try:
+            info = usbinfo.read_info(usbinfo.usb_device_dir(port))
+            path = usbinfo.save(
+                info, self.folder.expanduser(), f"connection{self.count}"
+            )
+        except (EubError, OSError) as exc:
+            print(f"USB descriptors not saved: {exc}", flush=True)
+            return
+        print(
+            f"USB descriptors (connection {self.count}): {usbinfo.summary(info)} -> {path}",
+            flush=True,
+        )
+        for change in usbinfo.changes(self.previous, info):
+            print(f"  changed since the previous connection: {change}", flush=True)
+        self.previous = info
+
+
+def follow_after_failure(session, original, recovery, dump_usb, capture, args):
+    """Research: watch the ROM come back after a failure; nothing is uploaded."""
+
+    def report(message):
+        print(message, flush=True)
+
+    returns = 0
+    while time.monotonic() < session.listen_until:
+        try:
+            port = find_port(original=original)
+            link = open_port(port, recovery=recovery)
+        except (EubError, OSError):
+            time.sleep(0.1)
+            continue
+        returns += 1
+        report(
+            f"ROM back on USB at +{time.monotonic() - session.failure_at:.2f} s: "
+            f"{port.device}"
+        )
+        dump_usb(port.device)
+        with link:
+            observed = capture.wrap(link, port.device) if capture else link
+            closed = listen_after(
+                observed,
+                MessageReader(),
+                session.listen_until,
+                session.failure_at,
+                report,
+                args.verbose,
+            )
+        if not closed:
+            break
+    if not returns:
+        report("The ROM did not come back on USB within the listening window.")
+    report(f"Stopped listening at +{time.monotonic() - session.failure_at:.1f} s.")
+
+
+def describe_stage(info):
+    if not info.tag:
+        return f"{info.name} | not a stage image | {info.size} bytes"
+    stage = info.stage or "unknown stage"
+    return (
+        f"{info.name} | {stage} ({info.tag}) | {info.size} bytes | "
+        f"USB boot: {'yes' if info.usb else 'no'} | "
+        f"family: {info.family or 'unknown'} | flags {info.flags:#06x}"
+    )
+
+
+def report_battery(fastboot, serial):
+    """Users report failed flashes below about 4200 mV; getvar is read-only."""
+    try:
+        code, output = fastboot.run("getvar", "battery-voltage", serial=serial)
+        match = re.search(r"battery-voltage:\s*(\d+)", output)
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        return  # Best-effort information; recovery already succeeded.
+    if code or not match:
+        return
+    millivolts = int(match[1])
+    if millivolts < 4200:
+        print(
+            f"WARNING: battery {millivolts} mV. Charge it in bootloader fastboot to "
+            "at least 4200 mV before flashing; users report failed flashes below that."
+        )
+    else:
+        print(f"Battery: {millivolts} mV.")
+
+
+def dpm_first_policy(model, allowed=False):
+    if model.usb_bl1 == "required" and not allowed:
+        return "stop"
+    return "warn" if model.usb_bl1 else "allow"
 
 
 def confirm_rom_panic():
@@ -386,9 +572,9 @@ def boot(args):
     compatibility = CompatibilityOverride(args.override)
     session, selected = Session(compatibility=compatibility), None
     recovery = (
-        None
-        if args.no_port_recovery
-        else PortAccessRecovery(lambda message: print(message, flush=True))
+        PortAccessRecovery(lambda message: print(message, flush=True))
+        if args.port_recovery and not args.no_port_recovery
+        else None
     )
     cache = Cache(args.cache_dir.expanduser(), args.offline)
     if not args.dry_run:
@@ -431,8 +617,12 @@ def boot(args):
     if not args.device or args.override:
         original = find_port(original=selected, wait=args.wait_timeout)
     current = original
+    dump_usb = UsbDumper(args.dump_usb)
+    capture = Capture(args.capture) if args.capture else None
+    if capture:
+        print(f"Capturing raw serial traffic to {capture.path}", flush=True)
     for connection in range(12):
-        opened = None
+        opened, failure = None, None
         if connection:
             print("Waiting for ROM USB re-enumeration to continue stage uploads…")
             deadline = time.monotonic() + args.reconnect_wait
@@ -454,6 +644,16 @@ def boot(args):
             else open_port(current, recovery=recovery) as link
         ):
             print(f"ROM serial port opened: {current.device}", flush=True)
+            dump_usb(current.device)
+            if capture:
+                link = capture.wrap(link, current.device)
+
+            def present(device=current.device):
+                try:
+                    return find_port(original=original).device == device
+                except EubError:
+                    return False
+
             try:
                 serve(
                     link,
@@ -466,11 +666,22 @@ def boot(args):
                     report=lambda message: print(message, flush=True),
                     confirm_panic=confirm_rom_panic if args.override else None,
                     allow_cached_identity=args.override and connection > 0,
+                    dpm_first=dpm_first_policy(model, args.allow_dpm_first),
+                    ack_timeout=args.ack_timeout,
+                    listen_after_failure=args.listen_after_failure,
+                    present=present,
                 )
             except OSError as exc:
                 if not disconnected(exc):
                     raise
                 print(f"USB disconnected ({exc}); following device handover.")
+            except EubError as exc:
+                if not session.listen_disconnected:
+                    raise
+                failure = exc
+        if failure:
+            follow_after_failure(session, original, recovery, dump_usb, capture, args)
+            raise failure
         # A ROM can re-enumerate after consuming the last byte, racing the
         # host's final tcdrain/flush. That attempt needs discovery even though
         # it could not be recorded as completely flushed. Success still
@@ -494,6 +705,7 @@ def boot(args):
                 print(
                     f"Bootloader fastboot confirmed: {confirmed} ({model.codename}). You can now use normal flashing tools."
                 )
+                report_battery(fastboot, confirmed)
                 return 0
             time.sleep(0.25)
     except (EubError, OSError, subprocess.SubprocessError, UnicodeError) as exc:
@@ -515,7 +727,9 @@ def main(argv=None) -> int:
             print("Model              Codename    SoC       Recovery availability")
             for model in MODELS:
                 status = (
-                    "no public USB BL1"
+                    "GS101: see gs101 command"
+                    if model.soc == "gs101"
+                    else "no public USB BL1"
                     if not model.pack
                     else (
                         "sibling pack: experimental"
@@ -525,7 +739,7 @@ def main(argv=None) -> int:
                 )
                 print(f"{model.name:18} {model.codename:11} {model.soc:9} {status}")
             print(
-                "USB connection and image uploads tested on one Pixel 6a (user-reported); successful fastboot recovery is unconfirmed. ROM signatures and anti-rollback still apply."
+                "Original boot command: successful fastboot recovery is unconfirmed. GS101: one bluejay and two oriole successes reported; raven unconfirmed. Anti-rollback still matters."
             )
         elif args.command == "doctor":
             return diagnose(args.cache_dir, args.fastboot)
@@ -540,6 +754,9 @@ def main(argv=None) -> int:
                 print(f"{port.device}\t{usb}\t{port.serial or '-'}\t{port.description}")
             if not found:
                 raise EubError("No matching serial devices found.")
+            dump = UsbDumper(args.dump_usb)
+            for port in found:
+                dump(port.device)
         elif args.command in ("builds", "fetch"):
             model = model_for(args.device)
             cache = Cache(args.cache_dir.expanduser(), args.offline)
@@ -557,6 +774,31 @@ def main(argv=None) -> int:
                     print(
                         f"{image.build}\t{image.description}\n  SHA-256 {image.sha256}\n  {image.url}"
                     )
+        elif args.command == "inspect":
+            for path in args.files:
+                for info in inspect_file(path):
+                    print(describe_stage(info))
+                    for note in info.notes:
+                        print(f"  ! {note}")
+            print(
+                "Read-only check. The USB flag is part of the signed header: changing "
+                "it breaks the signature. SoC family is known only for keys seen in "
+                "the pinned recovery pack."
+            )
+        elif args.command == "gs101":
+            from .gs101 import run, validate_profile
+
+            if args.check_profile:
+                validate_profile(args.device, args.profile)
+                print("GS101 profile is structurally complete and matches the selected model. USB was not opened.")
+                return 0
+            if not args.acknowledge_risk:
+                raise EubError("Read the GS101 warnings and pass --acknowledge-risk to continue.")
+            return run(args.device, args.profile)
+        elif args.command == "gui":
+            from .gui import run
+
+            return run()
         elif args.command == "unpack":
             pack = parse_fbpk(bounded_read(args.image))
             print(

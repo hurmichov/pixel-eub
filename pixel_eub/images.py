@@ -11,6 +11,7 @@ from . import EubError
 from .models import MODELS, Model
 
 HEADER = 4096
+EMPTY_DPM = bytes(HEADER)
 MAX_IMAGE = 128 * 1024**2
 MAX_IMAGES = 256 * 1024**2
 STAGES = {
@@ -109,7 +110,8 @@ def parse_fbpk(data: bytes) -> Bootloader:
             raise EubError(f"CRC32 mismatch in FBPK partition {name}.")
         if kind == 0:
             continue
-        if kind not in (1, 2) or not re.fullmatch(r"[a-z0-9_]+", name):
+        # Newer Pixel bootloaders also pack UFS partition tables as "partition:N".
+        if kind not in (1, 2) or not re.fullmatch(r"[a-z0-9_]+(?::[0-9]+)?", name):
             raise EubError(f"Unsupported FBPK entry {name!r} (type {kind}).")
         if name in images and images[name] != payload:
             raise EubError(f"Ambiguous slot images for {name}.")
@@ -220,9 +222,14 @@ def load_recovery(path: Path, model: Model) -> dict[str, bytes]:
 
 
 class Sources:
-    def __init__(self, layers: list[dict[str, bytes]], soc: str, epbl=None):
+    def __init__(
+        self, layers: list[dict[str, bytes]], soc: str, epbl=None, usb_check=True
+    ):
         self.layers = layers  # highest priority first
         self.epbl = epbl
+        # The ROM enforces the signed USB flag itself; this check only avoids a
+        # pointless attempt and can be skipped to observe the ROM's answer.
+        self.usb_check = usb_check
         self.use_soc(soc)
 
     def use_soc(self, soc: str):
@@ -251,7 +258,9 @@ class Sources:
                         continue  # never select an image signed for a different stage
                     return data
         if stage == "DPM":
-            return bytes(HEADER)
+            # Without a debug-policy image, answer with an empty header as
+            # tensor-usbdl does; serve() logs this placeholder explicitly.
+            return EMPTY_DPM
         raise EubError(f"No signed image available for ROM stage {stage}.")
 
     def payload(self, stage: str) -> bytes:
@@ -263,9 +272,13 @@ class Sources:
             raise EubError(
                 f"{stage} image is shorter than its signed 4096-byte header."
             )
-        if stage == "BL1" and not struct.unpack_from("<I", data, 0x410)[0] & 1:
+        if (
+            stage == "BL1"
+            and self.usb_check
+            and not struct.unpack_from("<I", data, 0x410)[0] & 1
+        ):
             raise EubError(
-                "BL1 lacks the signed USB-bootable flag. Retail BL1 cannot start ROM recovery; use a compatible recovery pack."
+                "BL1 lacks the signed USB-bootable flag. Retail BL1 cannot start ROM recovery; use a compatible recovery pack, or --no-usb-check to send it anyway and see the ROM's answer."
             )
         if mode == "header":
             return data[:HEADER]
@@ -313,3 +326,116 @@ class Sources:
         for stage in remaining:
             self.payload(stage)
         return remaining
+
+
+# Header field at 0x200 as observed in the pinned tensor-usbdl v0.2.0 recovery
+# pack. It is constant per SoC family and stage group; it is only used to label
+# images and never to accept or reject them. Other values are reported unknown.
+KNOWN_FINGERPRINTS = {
+    "c72ed72cc4136742bab2a493e3fe961e442e20152c6a98a3ab201412d144895d": "gs201",
+    "cb92e3eeff6161492fd20873e03017782a843fbefa1b41a5417755aee3f0eaec": "gs201",
+    "b39550686ffb7998759b7e0be5e5716c51202fc755a69e062784177548a1be8c": "gs201",
+    "fcb8ecb2aa4d009c2183d696863cd89416d87f8d668ef985c849f9a9e65a157e": "zuma",
+    "c9118646d95452bec2bb7369f1e130257e8cfa29ad309d3fe64ecd1d7e8de886": "zuma",
+    "29b1d27812c71520f67caace6c7e815cec40f9f52095b553f6ed5bd91e7ba9c7": "zuma",
+    "2aa0202bc96361af4252781e53b2718bd85cb533c8127c286eb228a5da80dc3f": "zuma",
+}
+TAG_NAMES = {
+    "APBL": "BL1",
+    "EPBL": "PBL",
+    "DPM": "DPM",
+    "BL2": "BL2",
+    "GSA1": "GSA",
+    "GSAF": "GSA firmware",
+    "ABL": "ABL",
+    "TZSW": "TZSW",
+    "LDFW": "LDFW",
+    "BL31": "BL31",
+    "GCF": "GCF",
+}
+
+
+@dataclass
+class StageInfo:
+    name: str
+    size: int
+    tag: str = ""
+    flags: int = 0
+    usb: bool = False
+    family: str = ""
+    notes: tuple[str, ...] = ()
+
+    @property
+    def stage(self):
+        return TAG_NAMES.get(self.tag, "")
+
+
+def inspect_stage(name: str, data: bytes) -> StageInfo:
+    """Describe one signed stage image without changing or trusting it."""
+    if len(data) < HEADER:
+        return StageInfo(
+            name, len(data), notes=("shorter than a 4096-byte stage header",)
+        )
+    tag = image_tag(data)
+    body, flags = struct.unpack_from("<II", data, 0x40C)
+    info = StageInfo(
+        name,
+        len(data),
+        tag,
+        flags,
+        bool(flags & 1),
+        KNOWN_FINGERPRINTS.get(data[0x200:0x220].hex(), ""),
+    )
+    notes = []
+    if tag not in TAG_NAMES:
+        notes.append("no known stage tag at 0x400; probably not a boot stage")
+    elif body != len(data) - HEADER:
+        notes.append(
+            f"header declares a {body}-byte body, file has {len(data) - HEADER}"
+        )
+    if tag == "APBL" and not info.usb:
+        notes.append(
+            "retail BL1: no signed USB-boot flag, the ROM will not boot it over USB"
+        )
+    info.notes = tuple(notes)
+    return info
+
+
+def inspect_file(path: Path) -> list[StageInfo]:
+    """Stage image, FBPK bootloader or ZIP (factory image or recovery pack)."""
+    if zipfile.is_zipfile(path):
+        results = []
+        with zipfile.ZipFile(path) as archive:
+            entries = [
+                e
+                for e in archive.infolist()
+                if not e.is_dir() and e.filename.endswith((".img", ".bin"))
+            ]
+            # A factory ZIP: only its bootloader matters (radio images are huge).
+            bootloaders = [
+                e
+                for e in entries
+                if PurePosixPath(e.filename).name.startswith("bootloader")
+            ]
+            for entry in bootloaders or entries:
+                if entry.file_size > MAX_IMAGE:
+                    note = f"skipped: larger than {MAX_IMAGE // 1024**2} MiB"
+                    results.append(
+                        StageInfo(entry.filename, entry.file_size, notes=(note,))
+                    )
+                    continue
+                results += inspect_blob(entry.filename, zip_read(archive, entry))
+        if not results:
+            raise EubError("ZIP contains no .img or .bin files.")
+        return results
+    return inspect_blob(path.name, bounded_read(path))
+
+
+def inspect_blob(name: str, data: bytes) -> list[StageInfo]:
+    if data[:4] == b"FBPK":
+        pack = parse_fbpk(data)
+        return [
+            inspect_stage(f"{name}:{part}", image)
+            for part, image in pack.images.items()
+        ]
+    return [inspect_stage(name, data)]
