@@ -92,6 +92,182 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(session.sent, ["BL1"])
         self.assertEqual(session.acknowledged, ["BL1"])
 
+    def serve_requests(self, chunks, policy, session=None):
+        link = FakeLink(chunks)
+        report = Mock()
+        session = session or Session()
+        sources = Sources([{"bl1": signed("APBL"), "pbl": signed("EPBL")}], "gs201")
+        with self.assertRaises(OSError):  # FakeLink disconnects when drained.
+            serve(link, sources, session, "gs201", report=report, dpm_first=policy)
+        return link, session, [call.args[0] for call in report.call_args_list]
+
+    def test_dpm_first_stops_before_any_upload_when_required(self):
+        link = FakeLink([b"eub:req:09855001:DPM\nC"])
+        with self.assertRaisesRegex(EubError, "DPM before BL1.*Nothing was uploaded"):
+            serve(
+                link,
+                Sources([{"bl1": signed("APBL")}], "gs201"),
+                Session(),
+                "gs201",
+                report=lambda _: None,
+                dpm_first="stop",
+            )
+        self.assertEqual(link.output, b"")
+
+    def test_dpm_first_warns_or_is_ignored_by_policy(self):
+        for policy, warned in (("warn", True), ("allow", False)):
+            with self.subTest(policy=policy):
+                link, session, lines = self.serve_requests(
+                    [b"eub:req:09855001:DPM\nC"], policy
+                )
+                self.assertEqual(session.sent, ["DPM"])
+                self.assertEqual(
+                    any(
+                        line.startswith("WARNING: ROM requested DPM") for line in lines
+                    ),
+                    warned,
+                )
+
+    def test_bl1_first_then_dpm_tells_user_to_release_buttons_once(self):
+        link, session, lines = self.serve_requests(
+            [
+                b"eub:req:09855001:BL1\nC",
+                b"eub:ack:09855001:BL1\neub:req:09855001:DPM\neub:req:09855001:DPM\nC",
+            ],
+            "stop",
+        )
+        self.assertEqual(session.sent, ["BL1", "DPM"])
+        hints = [line for line in lines if "release the buttons" in line]
+        self.assertEqual(len(hints), 1)
+        # Only the session's first request matters, also across reconnects.
+        link, session, lines = self.serve_requests(
+            [b"eub:req:09855001:EPBL\nC"], "stop", session=session
+        )
+        self.assertEqual(session.sent[-1], "EPBL")
+
+    # Dumps recorded from a Pixel 6a after three different BL1 uploads.
+    DUMPS = {
+        0x400: "00000400 b4e0008d 00006000 00824ca0",
+        0x500: "00000500 b4e0008d 00002000 00829a30",
+        0x600: "00000600 b4e0108d 00018000 00823640",
+    }
+    PREFIX = "e0000080 e0000080 00000000 a0031111 a0031112 a0121113"
+
+    # Bytes captured from a Pixel 6a after a BL1 with one changed header byte.
+    CAPTURED_BLOCK = bytes.fromhex(
+        "6530303030303830006530303030303830006530303030303830003030303030303030"
+        "006130303331313131006130303331313132006130313231313133003030303030303030"
+        "003030303030303030003030303030303030003030303030303030003030303030303030"
+        "003030303030303030003030303030303030000d0a00"
+    )
+    CAPTURED_LINE = b"\r\nirom_booting_failure::\x0000000001\x00" + CAPTURED_BLOCK
+
+    def test_reader_keeps_nul_separated_dump_words_in_one_message(self):
+        reader = MessageReader()
+        messages = []
+        for value in self.CAPTURED_BLOCK + self.CAPTURED_LINE + b"eub:req:0984:bl1\nC":
+            messages += reader.feed(bytes([value]))
+        self.assertEqual(len(messages), 4)
+        self.assertEqual(messages[0].split("\0")[:3], ["e0000080"] * 3)
+        self.assertTrue(
+            messages[1].startswith("irom_booting_failure::\x0000000001\x00")
+        )
+        self.assertEqual(messages[2:], ["eub:req:0984:bl1", "C"])
+        # Outside a dump, NUL still ends a message; a dump without a newline ends
+        # at the first non-hex byte.
+        self.assertEqual(
+            MessageReader().feed(b"eub:ack:0984:bl1\x00C"), ["eub:ack:0984:bl1", "C"]
+        )
+        self.assertEqual(
+            MessageReader().feed(b"e0000080\x00eub:req:0984:bl1\n"),
+            ["e0000080", "eub:req:0984:bl1"],
+        )
+
+    def test_dump_inside_failure_line_takes_precedence(self):
+        stale = "\n".join(f"{self.PREFIX} {self.DUMPS[0x500]}".split()) + "\n"
+        link = FakeLink([stale.encode(), self.CAPTURED_LINE])
+        lines = []
+        session = Session(serial="09845001", soc="gs101", sent=["BL1"])
+        with self.assertRaisesRegex(EubError, "Failure code 0x0: no code recorded"):
+            serve(link, Sources([{}], "gs101"), session, "gs101", report=lines.append)
+        dump = next(line for line in lines if line.startswith("ROM failure dump"))
+        self.assertIn("first word 00000001", dump)
+        self.assertIn("3x e0000080", dump)
+
+    def test_listen_after_failure_reports_repeats_without_uploading(self):
+        def line(counter):
+            return self.CAPTURED_LINE.replace(b"00000001", counter.encode(), 1)
+
+        link = FakeLink(
+            [
+                line("00000001"),
+                line("00000002"),
+                line("00000003"),
+                b"eub:req:09845001:bl1\n",
+            ]
+        )
+        lines = []
+        session = Session(serial="09845001", soc="gs101", sent=["BL1"])
+        with self.assertRaisesRegex(EubError, "Failure code 0x0"):
+            serve(
+                link,
+                Sources([{"bl1": signed("APBL")}], "gs101"),
+                session,
+                "gs101",
+                report=lines.append,
+                listen_after_failure=5,
+            )
+        repeats = [x for x in lines if x.startswith("Repeated failure")]
+        self.assertEqual(len(repeats), 2)
+        self.assertIn("first word 00000002, code 0x0", repeats[0])
+        self.assertIn("first word 00000003", repeats[1])
+        self.assertTrue(any("ROM after the failure" in x and "bl1" in x for x in lines))
+        self.assertTrue(any(x.startswith("Port closed at +") for x in lines))
+        self.assertIn("2 repeated failure line(s) on this connection", lines[-1])
+        self.assertTrue(session.listen_disconnected)
+        self.assertGreater(session.listen_until, session.failure_at)
+        self.assertEqual(link.output, b"")  # Nothing uploaded while listening.
+
+    def test_failure_dump_is_described(self):
+        from pixel_eub.protocol import describe_panic, panic_code
+
+        for code, tail in self.DUMPS.items():
+            words = f"{self.PREFIX} {tail} 00000000 00000000 00000000".split()
+            self.assertEqual(panic_code(words), code)
+            line = describe_panic(words)
+            self.assertIn(f"code {code:#x}", line)
+            self.assertIn("hypothesis", line)
+        self.assertIn(
+            "address 0x00829a30",
+            describe_panic(f"{self.PREFIX} {self.DUMPS[0x500]}".split()),
+        )
+        self.assertIn("unrecognised", describe_panic(["deadbeef"]))
+        self.assertIsNone(panic_code(["deadbeef"]))
+
+    def test_rejection_reports_dump_and_code(self):
+        words = f"{self.PREFIX} {self.DUMPS[0x500]} 00000000".split()
+        link = FakeLink([("\n".join(words) + "\nirom_booting_failure::\n").encode()])
+        lines = []
+        session = Session(serial="09845001", soc="gs101", sent=["BL1"])
+        with self.assertRaisesRegex(EubError, "Failure code 0x500: likely USB boot"):
+            serve(link, Sources([{}], "gs101"), session, "gs101", report=lines.append)
+        self.assertTrue(
+            any(line.startswith("ROM failure dump: code 0x500") for line in lines)
+        )
+
+    def test_missing_dpm_placeholder_is_reported(self):
+        for images, placeholder in (({}, True), ({"dpm": signed("DPM")}, False)):
+            link = FakeLink([b"eub:req:09865001:DPM\nC"])
+            report = Mock()
+            with self.subTest(placeholder=placeholder), self.assertRaises(OSError):
+                serve(link, Sources([images], "zuma"), Session(), "zuma", report=report)
+            sending = next(
+                call.args[0]
+                for call in report.call_args_list
+                if call.args[0].startswith("Sending DPM")
+            )
+            self.assertEqual("empty placeholder" in sending, placeholder)
+
     def test_wrong_chip_and_changed_phone_upload_nothing(self):
         for serial, session in (
             ("09855001", Session()),
@@ -127,8 +303,9 @@ class ProtocolTests(unittest.TestCase):
                 )
 
     def test_repeat_limit_and_request_change(self):
+        retry = [b"eub:req:09865001:BL1\nC", b"eub:ack:09865001:BL1\n"]
         for chunks, error in (
-            ([b"eub:req:09865001:BL1\nC"] * 6, "five"),
+            (retry * 6, "five"),
             ([b"eub:req:09865001:BL1\neub:req:09865001:ABL\n"], "changed request"),
         ):
             with self.assertRaisesRegex(EubError, error):
@@ -139,6 +316,73 @@ class ProtocolTests(unittest.TestCase):
                     "zuma",
                     report=lambda _: None,
                 )
+
+    def test_request_echo_before_ack_does_not_send_the_stage_twice(self):
+        # Observed on Pixel 7/8: request and C repeat right after an upload.
+        image, pbl = signed("APBL"), signed("EPBL", b"pbl")
+        link = FakeLink(
+            [
+                b"eub:req:09855001:BL1\nC",
+                b"eub:req:09855001:BL1\nC",
+                b"eub:ack:09855001:BL1\neub:req:09855001:EPBL\nC",
+                b"eub:req:09855001:EPBL\nC",
+            ]
+        )
+        session = Session()
+        with self.assertRaises(OSError):
+            serve(
+                link,
+                Sources([{"bl1": image, "pbl": pbl}], "gs201"),
+                session,
+                "gs201",
+                report=lambda _: None,
+            )
+        self.assertEqual(session.sent, ["BL1", "EPBL"])
+        self.assertEqual(link.output, frame(image) + frame(pbl))
+
+    def test_long_silence_after_upload_waits_while_port_is_present(self):
+        clock = [0.0]
+
+        class QuietLink(FakeLink):
+            def read(self, count):
+                clock[0] += 1
+                try:
+                    return next(self.chunks)
+                except StopIteration:
+                    return b""
+
+        def run(present, ack_timeout=600):
+            clock[0] = 0.0
+            lines = []
+            link = QuietLink([b"eub:req:09855001:GSA1\nC", b"eub:ack:09855001:GSA1\n"])
+            with patch(
+                "pixel_eub.protocol.time.monotonic", side_effect=lambda: clock[0]
+            ):
+                serve(
+                    link,
+                    Sources([{"gsa": signed("GSA1")}], "gs201"),
+                    Session(),
+                    "gs201",
+                    report=lines.append,
+                    ack_timeout=ack_timeout,
+                    present=present,
+                )
+            return clock[0], lines
+
+        # GSA1 verification: minutes of silence are not an idle timeout.
+        state = {"calls": 0}
+
+        def gone_after_four_minutes():
+            state["calls"] += 1
+            return clock[0] < 240
+
+        elapsed, lines = run(gone_after_four_minutes)
+        self.assertGreaterEqual(elapsed, 240)
+        self.assertTrue(
+            any(line.startswith("Waiting for the ROM after GSA1") for line in lines)
+        )
+        with self.assertRaisesRegex(EubError, "silent for .* GSA1"):
+            run(lambda: True, ack_timeout=120)
 
     def panic_sources(self):
         return Sources(

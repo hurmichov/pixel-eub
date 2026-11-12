@@ -60,6 +60,23 @@ class DownloadsTests(unittest.TestCase):
         with self.assertRaisesRegex(EubError, "Several"):
             select_image(rows + [rows[-2]], "husky", None)
 
+    def test_latest_compares_numeric_and_suffixed_build_parts(self):
+        rows = parse_catalog(
+            row(
+                build="bp1a.250505.019",
+                description="15.0.0 (BP1A.250505.019, May 2025)",
+            )
+            + row(
+                build="bp1a.250505.019a",
+                description="15.0.0 (BP1A.250505.019A, May 2025)",
+            )
+            + row(
+                build="bp1a.250505.007",
+                description="15.0.0 (BP1A.250505.007, May 2025)",
+            )
+        )
+        self.assertEqual(select_image(rows, "husky", None).build, "bp1a.250505.019a")
+
     def test_valid_cache_reused_and_offline_corruption_rejected(self):
         payload = b"download body"
         digest = hashlib.sha256(payload).hexdigest()
