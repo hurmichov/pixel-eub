@@ -1,0 +1,4 @@
+# Pixel GS101 ROM recovery and temporary bootloader fastboot.
+# Grant access to the active local desktop session via systemd-logind.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="18d1", ATTR{idProduct}=="4f00", TAG+="uaccess"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="18d1", ATTR{idProduct}=="4ee0", TAG+="uaccess"
