@@ -41,7 +41,7 @@ def diagnose(cache_dir: Path, fastboot: str = "fastboot") -> int:
                 report(
                     "FAIL",
                     f"ROM port {port.device}: no read/write permission. "
-                    "Configure the serial group/udev rule or use boot's port recovery.",
+                    "Configure the serial group/udev rule or use boot --port-recovery.",
                 )
         else:
             report("INFO", f"ROM port {port.device}: access must be checked by boot")

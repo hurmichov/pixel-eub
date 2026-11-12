@@ -1,16 +1,73 @@
 # Changelog
 
-## 1.0.0 — 2026-10-30
+## 1.0.1 — GS101 recovery
 
-First stable release, retaining the recovery functionality and fixes from beta.5.
+- Add a separate Linux GS101 USB recovery backend and integrate it into the GTK dashboard.
+- Provide a GS101 profile check, device-specific udev rule and recovery warnings.
+- One Pixel 6a and two Pixel 6 devices were reported recovered; Pixel 6 Pro has a profile but no reported hardware success. The integrated path was subsequently reported working on Pixel 6a.
+- GS101 recovery uses modified boot stages; fastboot USB detection does not verify the target phone or permanent repair.
 
+
+### Additional changes in 1.0.1
+
+- Add `pixel-eub gui`, an optional GTK 4 / libadwaita interface with Dashboard,
+  Firmware, Diagnostics, Analyzer, Terminal, Settings and Credits pages. It runs
+  the same CLI in a child process, shows each exact command, turns YES/NO
+  prompts into dialogs that require typing YES, and never saves override,
+  sibling-pack or port-recovery switches. The CLI gains no new dependencies.
+- Pixel 7, 7 Pro and Fold: stop before any upload when the ROM requests DPM
+  before BL1 (BL1 started from UFS; users report GSA/GSC errors after BL3B),
+  with reconnect instructions; `--allow-dpm-first` continues. Pixel 7a only
+  warns. After BL1, a DPM request prints that the buttons can be released.
+- Add `--listen-after-failure SECONDS` to observe how the ROM repeats a failure
+  (time and first word of each repeat); GUI: Settings → Research.
+- Read the iROM failure dump from the `irom_booting_failure::` line itself,
+  where words are NUL-separated (seen in a raw capture), instead of from a
+  preceding block; show its first word and `e0000080` count, and code 0.
+- Describe iROM failure dumps in one line (code, status, value, address) with
+  hypothesised meanings of codes 0x400/0x500/0x600 seen on a Pixel 6a, and add
+  the code to the rejection error.
+- Add `--capture PATH`: timestamped JSON-lines record of ROM bytes and uploads.
+  GUI: Settings → Research folder with descriptor and capture switches.
+- Accept `partition:N` entries (UFS partition tables) in newer Pixel FBPK
+  bootloaders, such as recent Pixel 6a factory images; they were rejected.
+- Add `--dump-usb DIR` to `boot` and `detect` (Linux): save raw and decoded USB
+  descriptors per ROM connection from sysfs and log changes between stages,
+  without root or USB transfers. GUI: Settings → Research.
+- Add `--no-usb-check` (and a session-only GUI switch) to send a BL1 without the
+  signed USB-boot flag for experiments; the ROM still enforces the flag.
+- Add `inspect` for stage images, FBPK bootloaders, factory ZIPs and recovery
+  packs: stage, signed USB-boot flag, SoC family (labelled only for keys seen in
+  the pinned recovery pack) and header inconsistencies. The GUI Analyzer uses it.
+- Do not send a stage twice when the ROM echoes its request and C right after
+  an upload (seen in Pixel 7/8 logs); repeats are served only after an ACK.
+- Wait up to `--ack-timeout` (600 s) after an upload instead of the 15 s idle
+  limit and the 180 s per-connection cap: GSA1 and BL3B verification can take
+  minutes. Progress is printed every 30 s and a vanished port is followed.
+- On zuma, `bl1 header fail` mentions the reported April 2025 bootloader limit.
+  After confirming fastboot, print the battery voltage and warn below 4200 mV.
+- Port recovery without a terminal (for example from the GUI) now asks for the
+  administrator password through polkit (`pkexec`) in a desktop session instead
+  of failing with `sudo -n`. The password never passes through pixel-eub.
+
+## 1.0.0rc1 — 2026-10-31
+
+Release candidate for 1.0.0, tagged `v1.0.0-RC`. It replaces the unpublished
+1.0.0 stable label: physical recovery into bootloader fastboot is still
+unconfirmed, so the package is marked Beta.
+
+- Linux port recovery (`sudo setfacl`, `fuser -k -TERM`) is now opt-in with
+  `--port-recovery`. `--no-port-recovery` is still accepted and takes priority.
+  Access errors without it suggest the flag.
+- Fix `TypeError` when `latest` compared build IDs such as `…019` and `…019a`.
+- Log the 4096-byte empty DPM sent when no signed DPM image exists.
 - Start both READMEs with an introduction to pixel-eub; move diagnostics and
   experimental panic continuation into their relevant sections.
 - Record user-reported USB connection and image-upload testing on one physical
   Pixel 6a. Successful recovery into bootloader fastboot has not been confirmed.
 - Keep the host-ordered panic continuation explicitly experimental and require
   `--override` plus a separate YES confirmation.
-- Publish the stable wheel, sdist, source ZIP and SHA-256 checksums.
+- Publish the wheel, sdist, source ZIP and SHA-256 checksums.
 
 ## 1.0.0b5 — 2026-10-30
 

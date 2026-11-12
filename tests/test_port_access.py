@@ -179,19 +179,43 @@ class PortAccessTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "linux", "Linux administrator commands")
 class PrivilegedCommandTests(unittest.TestCase):
-    def test_noninteractive_sudo_never_prompts_in_a_pipe(self):
+    def run_privileged(self, *, tty, env, pkexec="/usr/bin/pkexec", code=0):
         recovery = PortAccessRecovery(report=Mock())
-        result = subprocess.CompletedProcess([], 0, "", "")
+        result = subprocess.CompletedProcess([], code, "", "")
         with (
             patch("pixel_eub.port_access.os.geteuid", return_value=1000),
-            patch("pixel_eub.port_access.sys.stdin.isatty", return_value=False),
+            patch("pixel_eub.port_access.sys.stdin.isatty", return_value=tty),
             patch("pixel_eub.port_access.tool", return_value="/usr/bin/sudo"),
+            patch("pixel_eub.port_access.shutil.which", return_value=pkexec),
+            patch.dict("pixel_eub.port_access.os.environ", env, clear=True),
             patch("pixel_eub.port_access.subprocess.run", return_value=result) as run,
         ):
             recovery.privileged(
                 ["/usr/bin/setfacl", "-m", "u:1000:rw", "--", "/dev/ttyACM0"]
             )
-        self.assertEqual(run.call_args.args[0][:3], ["/usr/bin/sudo", "-n", "--"])
+        return run.call_args
+
+    def test_authentication_method_follows_terminal_and_desktop(self):
+        desktop = {"WAYLAND_DISPLAY": "wayland-0"}
+        call = self.run_privileged(tty=True, env=desktop)
+        self.assertEqual(call.args[0][:3], ["/usr/bin/sudo", "--", "/usr/bin/setfacl"])
+        # No terminal in a desktop session (the GUI): polkit's own dialog.
+        call = self.run_privileged(tty=False, env=desktop)
+        self.assertEqual(call.args[0][:2], ["/usr/bin/pkexec", "/usr/bin/setfacl"])
+        self.assertEqual(call.kwargs["timeout"], 180)
+        call = self.run_privileged(tty=False, env={"DISPLAY": ":0"})
+        self.assertEqual(call.args[0][0], "/usr/bin/pkexec")
+        # Neither: sudo must never wait for a password it cannot read.
+        call = self.run_privileged(tty=False, env={})
+        self.assertEqual(call.args[0][:3], ["/usr/bin/sudo", "-n", "--"])
+        call = self.run_privileged(tty=False, env=desktop, pkexec=None)
+        self.assertEqual(call.args[0][:3], ["/usr/bin/sudo", "-n", "--"])
+
+    def test_polkit_cancel_and_missing_agent_are_explained(self):
+        desktop = {"WAYLAND_DISPLAY": "wayland-0"}
+        for code, message in ((126, "cancelled or denied"), (127, "polkit")):
+            with self.subTest(code=code), self.assertRaisesRegex(EubError, message):
+                self.run_privileged(tty=False, env=desktop, code=code)
 
     def test_admin_failure_and_timeout_are_actionable_errors(self):
         for failure in (

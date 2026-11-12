@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pixel-eub"
-version = "1.0.0"
+version = "1.0.1"
 description = "Request-driven Tensor Pixel ROM Recovery to fastboot utility"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,6 +43,10 @@ include-package-data = false
 
 [tool.setuptools.packages.find]
 include = ["pixel_eub*"]
+
+[tool.setuptools.package-data]
+"pixel_eub" = ["gs101_assets/*.c", "gs101_assets/*.s"]
+"pixel_eub.gui" = ["style.css", "icons/hicolor/scalable/*/*.svg"]
 
 [tool.ruff]
 target-version = "py310"

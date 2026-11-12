@@ -66,6 +66,39 @@ NO, invalid/empty input and EOF cancel. Header failures and NAK remain terminal.
 Forced uploads do not mean the ROM accepted or executed the chain; final
 fastboot product verification still determines success.
 
+### Echoed requests and long silences
+
+Logs from Pixel 7 and 8 show the ROM repeating the current request and C right
+after an upload, before its ACK. The host ignores repeats of the uploaded stage
+until an ACK or a different request; a stage is sent again only when the ROM
+asks after an ACK (at most five times). After an upload the ROM may stay silent
+for minutes (GSA1, BL3B); the host waits up to `--ack-timeout` while the ROM
+port stays enumerated, and follows the handover once it disappears.
+
+### iROM failure dump
+
+A raw capture shows the dump inside the failure line, words separated by NUL:
+`irom_booting_failure::\0 00000001\0 e0000080\0 ...\r\n`, repeated about every
+0.8 s. A block seen right after reconnecting is the tail of a line whose prefix
+was sent before the port opened. On a Pixel 6a the words were `00000001`, one or
+more `e0000080`, `00000000`, the markers `a0031111 a0031112 a0121113`, then code,
+status, value and an address-like word. The ROM reset about 5 ms after the last
+BL1 byte. Three BL1 uploads gave
+code 0x400 (EPBL sent as BL1), 0x500 (genuine bluejay BL1 without the USB flag)
+and 0x600 (gs201 BL1 with the USB flag, foreign key), consistent with checks of
+header, then USB permission, then signature. A genuine BL1 with one changed
+header byte gave three `e0000080` and all-zero fields instead. This is a
+hypothesis.
+
+### Request order on Pixel 7 series
+
+A USB-booted Pixel 7 / 7 Pro requests BL1, then DPM. User reports describe
+DPM-first sessions on these phones as BL1 already started from UFS; with the
+public recovery images they stall after BL3B and boot with GSA/GSC errors.
+The first request of a session is therefore checked per model: stop (Pixel 7,
+7 Pro, Fold), warn (7a) or ignore (others; Pixel Tablet reports DPM-first
+sessions that reach fastboot). This is a field report, not a documented ROM rule.
+
 ## Host upload
 
 ```
@@ -86,7 +119,7 @@ in its signed flags. The host never patches signed data.
 | Request | Image tag | Slice |
 | --- | --- | --- |
 | BL1 | APBL | full |
-| DPM | DPM | full; 4096 zero bytes if absent |
+| DPM | DPM | full; 4096 zero bytes if absent, logged as a placeholder |
 | EPBL | EPBL | full on gs101/gs201, header on zuma |
 | EPBB | EPBL | body |
 | BL2 / BL2B | BL2 | header / body |

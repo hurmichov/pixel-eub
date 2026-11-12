@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pixel-EUB
+Comment=Recover Tensor Pixels from ROM Recovery to bootloader fastboot
+Exec=pixel-eub gui
+Icon=io.github.hurmichov.PixelEub
+Terminal=false
+Categories=Development;Utility;
+Keywords=pixel;tensor;recovery;fastboot;usb;
+StartupNotify=true

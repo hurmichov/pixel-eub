@@ -77,36 +77,258 @@ class CliTests(unittest.TestCase):
         opened.assert_not_called()
         fastboot.assert_not_called()
 
-    def test_no_port_recovery_disables_privileged_repair(self):
+    def test_listen_after_failure_option_is_passed_and_validated(self):
+        with patch("pixel_eub.cli.boot", return_value=0) as boot:
+            self.run_cli("boot", "--device", "bluejay", "--listen-after-failure", "10")
+        self.assertEqual(boot.call_args.args[0].listen_after_failure, 10)
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as exit:
+            main(["boot", "--device", "bluejay", "--listen-after-failure", "-1"])
+        self.assertEqual(exit.exception.code, 2)
+        self.assertIn("0 or more", errors.getvalue())
+
+    def test_capture_records_the_boot_session(self):
+        import json
+
         from pixel_eub.images import Sources
 
         link = FakeLink([b"eub:req:09865001:BL3B\nC"])
         fb = Mock()
-        fb.verify.return_value = "RECOVERED"
+        fb.verify.return_value = "OK"
         with (
-            patch("pixel_eub.cli.PortAccessRecovery") as repair,
+            tempfile.TemporaryDirectory() as temp,
             patch(
                 "pixel_eub.cli.prepare",
                 return_value=Sources([{"bl31": signed("BL31", b"last")}], "zuma"),
             ),
-            patch(
-                "pixel_eub.cli.find_port",
-                side_effect=[Port("first"), NoDevice("not found")],
-            ),
-            patch("pixel_eub.cli.open_port", return_value=link) as opened,
+            patch("pixel_eub.cli.find_port", side_effect=[Port("p"), NoDevice("x")]),
+            patch("pixel_eub.cli.open_port", return_value=link),
             patch("pixel_eub.cli.Fastboot", return_value=fb),
         ):
-            code, _, errors = self.run_cli(
+            code, output, _ = self.run_cli(
                 "boot",
                 "--device",
                 "husky",
                 "--reconnect-wait",
                 "0.01",
-                "--no-port-recovery",
+                "--capture",
+                temp,
             )
+            (path,) = Path(temp).glob("capture-*.jsonl")
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual(code, 0)
+        self.assertIn("Capturing raw serial traffic to", output)
+        self.assertEqual(records[0]["event"], "open")
+        self.assertTrue(any("rx" in r for r in records))
+        self.assertTrue(any(r.get("tx") for r in records))
+
+    def test_dump_usb_saves_each_connection_and_never_blocks_recovery(self):
+        from pixel_eub.images import Sources
+        from pixel_eub.usbinfo import UsbInfo
+
+        first = FakeLink([b"eub:req:09865001:BL2B\nC"])
+        second = FakeLink([b"eub:req:09865001:BL3B\nC"])
+        infos = [
+            UsbInfo("a", {"bcdDevice": "0100"}, b"\x12\x01"),
+            UsbInfo("b", {"bcdDevice": "0200"}, b"\x12\x01"),
+        ]
+        fb = Mock()
+        fb.verify.return_value = "OK"
+        sources = Sources(
+            [{"bl2": signed("BL2", b"two"), "bl31": signed("BL31", b"last")}], "zuma"
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch("pixel_eub.cli.prepare", return_value=sources),
+            patch("pixel_eub.cli.Fastboot", return_value=fb),
+            patch(
+                "pixel_eub.cli.find_port",
+                side_effect=[Port("first"), Port("second"), NoDevice("gone")],
+            ),
+            patch("pixel_eub.cli.open_port", side_effect=[first, second]),
+            patch("pixel_eub.cli.usbinfo.usb_device_dir", return_value=Path(temp)),
+            patch("pixel_eub.cli.usbinfo.read_info", side_effect=infos),
+        ):
+            code, output, errors = self.run_cli(
+                "boot",
+                "--device",
+                "husky",
+                "--reconnect-wait",
+                "0.05",
+                "--dump-usb",
+                temp,
+            )
+            saved = sorted(p.name for p in Path(temp).glob("usb-*-connection*.txt"))
         self.assertEqual((code, errors), (0, ""))
-        repair.assert_not_called()
-        self.assertIsNone(opened.call_args.kwargs["recovery"])
+        self.assertEqual(len(saved), 2)
+        self.assertIn("USB descriptors (connection 2)", output)
+        self.assertIn(
+            "changed since the previous connection: bcdDevice 0100 -> 0200", output
+        )
+        # A failed dump is reported, not fatal.
+        link = FakeLink([b"eub:req:09865001:BL3B\nC"])
+        with (
+            patch("pixel_eub.cli.prepare", return_value=sources),
+            patch("pixel_eub.cli.Fastboot", return_value=fb),
+            patch("pixel_eub.cli.find_port", side_effect=[Port("p"), NoDevice("x")]),
+            patch("pixel_eub.cli.open_port", return_value=link),
+            patch(
+                "pixel_eub.cli.usbinfo.usb_device_dir",
+                side_effect=EubError("No sysfs USB entry"),
+            ),
+        ):
+            code, output, _ = self.run_cli(
+                "boot",
+                "--device",
+                "husky",
+                "--reconnect-wait",
+                "0.01",
+                "--dump-usb",
+                "/nonexistent",
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("USB descriptors not saved: No sysfs USB entry", output)
+
+    def test_no_usb_check_sends_retail_bl1_unchanged(self):
+        from pixel_eub.protocol import frame
+
+        retail = signed("APBL", flags=0x400)
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "bl1.img").write_bytes(retail)
+            for flags, sent in (([], False), (["--no-usb-check"], True)):
+                link = FakeLink([b"eub:req:09845001:BL1\nC"])
+                with (
+                    self.subTest(flags=flags),
+                    patch("pixel_eub.cli.find_port", return_value=Port("first")),
+                    patch("pixel_eub.cli.open_port", return_value=link),
+                    patch("pixel_eub.cli.Fastboot") as fastboot,
+                ):
+                    code, output, errors = self.run_cli(
+                        "boot",
+                        "--device",
+                        "bluejay",
+                        "--dir",
+                        temp,
+                        "--pack",
+                        "none",
+                        "--reconnect-wait",
+                        "0.01",
+                        *flags,
+                    )
+                    self.assertEqual(code, 1)
+                    self.assertEqual(bytes(link.output) == frame(retail), sent)
+                    if sent:
+                        self.assertIn("WARNING: --no-usb-check", output)
+                    else:
+                        self.assertIn("USB-bootable flag", errors)
+                        fastboot.assert_not_called()
+
+    def test_inspect_command_reports_usb_flag(self):
+        with tempfile.TemporaryDirectory() as temp:
+            retail = Path(temp) / "bl1.bin"
+            retail.write_bytes(signed("APBL", flags=0x400))
+            usb = Path(temp) / "bl31.img"
+            usb.write_bytes(signed("BL31", flags=0x401))
+            code, output, _ = self.run_cli("inspect", str(retail), str(usb))
+        self.assertEqual(code, 0)
+        self.assertIn("bl1.bin | BL1 (APBL) | 4100 bytes | USB boot: no", output)
+        self.assertIn("  ! retail BL1", output)
+        self.assertIn("bl31.img | BL31 (BL31) | 4100 bytes | USB boot: yes", output)
+
+    def test_battery_voltage_after_fastboot_is_best_effort(self):
+        from pixel_eub.cli import report_battery
+
+        for reply, expected in (
+            ((0, "battery-voltage: 3756\nFinished."), "WARNING: battery 3756 mV"),
+            ((0, "battery-voltage: 4302\n"), "Battery: 4302 mV."),
+            ((1, "FAILED (remote: unknown variable)"), ""),
+        ):
+            fastboot = Mock()
+            fastboot.run.return_value = reply
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                report_battery(fastboot, "SERIAL")
+            self.assertEqual(
+                output.getvalue().split("\n")[0][: len(expected)], expected
+            )
+
+    def test_dpm_first_policy_follows_model(self):
+        from pixel_eub.cli import dpm_first_policy
+        from pixel_eub.models import model_for
+
+        for device, allowed, expected in (
+            ("panther", False, "stop"),
+            ("cheetah", False, "stop"),
+            ("felix", False, "stop"),
+            ("cheetah", True, "warn"),
+            ("lynx", False, "warn"),
+            ("tangorpro", False, "allow"),
+            ("husky", False, "allow"),
+        ):
+            with self.subTest(device=device, allowed=allowed):
+                self.assertEqual(dpm_first_policy(model_for(device), allowed), expected)
+
+    def test_dpm_first_stops_cli_boot_without_fastboot_check(self):
+        from pixel_eub.images import Sources
+
+        link = FakeLink([b"eub:req:09855001:DPM\nC"])
+        with (
+            patch(
+                "pixel_eub.cli.prepare",
+                return_value=Sources([{"bl1": signed("APBL")}], "gs201"),
+            ),
+            patch("pixel_eub.cli.find_port", return_value=Port("first")),
+            patch("pixel_eub.cli.open_port", return_value=link),
+            patch("pixel_eub.cli.Fastboot") as fastboot,
+        ):
+            code, _, errors = self.run_cli("boot", "--device", "cheetah")
+        self.assertEqual(code, 1)
+        self.assertIn("DPM before BL1", errors)
+        self.assertIn("--allow-dpm-first", errors)
+        self.assertEqual(link.output, b"")
+        fastboot.assert_not_called()
+
+    def test_port_recovery_is_opt_in(self):
+        from pixel_eub.images import Sources
+
+        for flags, enabled in (
+            ((), False),
+            (("--no-port-recovery",), False),
+            (("--port-recovery", "--no-port-recovery"), False),
+            (("--port-recovery",), True),
+        ):
+            link = FakeLink([b"eub:req:09865001:BL3B\nC"])
+            fb = Mock()
+            fb.verify.return_value = "RECOVERED"
+            with (
+                self.subTest(flags=flags),
+                patch("pixel_eub.cli.PortAccessRecovery") as repair,
+                patch(
+                    "pixel_eub.cli.prepare",
+                    return_value=Sources([{"bl31": signed("BL31", b"last")}], "zuma"),
+                ),
+                patch(
+                    "pixel_eub.cli.find_port",
+                    side_effect=[Port("first"), NoDevice("not found")],
+                ),
+                patch("pixel_eub.cli.open_port", return_value=link) as opened,
+                patch("pixel_eub.cli.Fastboot", return_value=fb),
+            ):
+                code, _, errors = self.run_cli(
+                    "boot",
+                    "--device",
+                    "husky",
+                    "--reconnect-wait",
+                    "0.01",
+                    *flags,
+                )
+                self.assertEqual((code, errors), (0, ""))
+                self.assertEqual(repair.called, enabled)
+                recovery = opened.call_args.kwargs["recovery"]
+                if enabled:
+                    self.assertIs(recovery, repair.return_value)
+                else:
+                    self.assertIsNone(recovery)
 
     def test_reconnects_then_confirms_fastboot(self):
         first = FakeLink([b"eub:req:09865001:BL2B\nC"])

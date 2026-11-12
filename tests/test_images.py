@@ -3,9 +3,17 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from pixel_eub import EubError
-from pixel_eub.images import Sources, load_bootloader, load_recovery, parse_fbpk
+from pixel_eub.images import (
+    Sources,
+    inspect_file,
+    inspect_stage,
+    load_bootloader,
+    load_recovery,
+    parse_fbpk,
+)
 from pixel_eub.models import model_for
 from tests.helpers import fbpk, signed
 
@@ -16,6 +24,10 @@ class ImagesTests(unittest.TestCase):
         pack = parse_fbpk(fbpk([("abl_a", payload), ("abl_b", payload)]))
         self.assertEqual(pack.platform, "zuma")
         self.assertEqual(pack.images, {"abl": payload})
+        tables = parse_fbpk(fbpk([("partition:0", b"GPT"), ("bl1_a", signed("APBL"))]))
+        self.assertEqual(sorted(tables.images), ["bl1", "partition:0"])
+        with self.assertRaisesRegex(EubError, "Unsupported"):
+            parse_fbpk(fbpk([("../abl", payload)]))
         broken = bytearray(fbpk([("abl", payload)]))
         broken[-1] ^= 1
         with self.assertRaisesRegex(EubError, "CRC32"):
@@ -124,3 +136,64 @@ class ImagesTests(unittest.TestCase):
         ):
             with self.subTest(stage=stage), self.assertRaisesRegex(EubError, error):
                 Sources([images], "zuma").payload(stage)
+
+    def test_usb_check_can_be_skipped_explicitly(self):
+        retail = signed("APBL", flags=0x400)
+        source = Sources([{"bl1": retail}], "gs101", usb_check=False)
+        self.assertEqual(source.payload("BL1"), retail)  # Sent unchanged.
+
+
+class InspectTests(unittest.TestCase):
+    GS201_STAGE = bytes.fromhex(
+        "c72ed72cc4136742bab2a493e3fe961e442e20152c6a98a3ab201412d144895d"
+    )
+
+    def test_stage_flag_family_and_notes(self):
+        retail = inspect_stage("bl1.bin", signed("APBL", flags=0x400))
+        self.assertEqual((retail.stage, retail.usb, retail.family), ("BL1", False, ""))
+        self.assertIn("retail BL1", retail.notes[0])
+        recovery = bytearray(signed("EPBL", b"pbl", flags=0x401))
+        recovery[0x200:0x220] = self.GS201_STAGE
+        info = inspect_stage("pbl.img", bytes(recovery))
+        self.assertEqual((info.stage, info.usb, info.family), ("PBL", True, "gs201"))
+        self.assertEqual(info.notes, ())
+        broken = signed("BL2", b"body") + b"extra"
+        self.assertIn("declares", inspect_stage("bl2", broken).notes[0])
+        self.assertEqual(inspect_stage("x", b"short").tag, "")
+        self.assertIn("no known stage tag", inspect_stage("x", bytes(5000)).notes[0])
+
+    def test_files_fbpk_and_zip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            raw = Path(temp) / "bl1.bin"
+            raw.write_bytes(signed("APBL"))
+            self.assertEqual([i.name for i in inspect_file(raw)], ["bl1.bin"])
+            boot = Path(temp) / "bootloader.img"
+            boot.write_bytes(fbpk([("bl1_a", signed("APBL")), ("abl", signed("ABL"))]))
+            names = [i.name for i in inspect_file(boot)]
+            self.assertEqual(names, ["bootloader.img:bl1", "bootloader.img:abl"])
+            archive = Path(temp) / "pack.zip"
+            with zipfile.ZipFile(archive, "w") as z:
+                z.writestr("sources/gs201/bl1.img", signed("APBL"))
+                z.writestr("readme.txt", "ignored")
+            self.assertEqual(
+                [i.name for i in inspect_file(archive)], ["sources/gs201/bl1.img"]
+            )
+            factory = Path(temp) / "bluejay-factory.zip"
+            with zipfile.ZipFile(factory, "w") as z:
+                z.writestr(
+                    "bluejay-x/bootloader-bluejay-x.img",
+                    fbpk([("bl1", signed("APBL"))]),
+                )
+                z.writestr("bluejay-x/radio-bluejay-x.img", b"radio")
+            self.assertEqual(
+                [i.name for i in inspect_file(factory)],
+                ["bluejay-x/bootloader-bluejay-x.img:bl1"],
+            )
+            with patch("pixel_eub.images.MAX_IMAGE", 10):
+                skipped = inspect_file(archive)
+            self.assertIn("skipped", skipped[0].notes[0])
+            empty = Path(temp) / "empty.zip"
+            with zipfile.ZipFile(empty, "w") as z:
+                z.writestr("readme.txt", "x")
+            with self.assertRaisesRegex(EubError, "no .img"):
+                inspect_file(empty)

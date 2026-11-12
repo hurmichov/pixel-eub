@@ -17,7 +17,7 @@ from . import EubError
 INDEX_URL = "https://developers.google.com/android/images"
 PACK_URL = "https://github.com/JoshuaDoes/tensor-usbdl/releases/download/020/tensor-usbdl-v0.2.0.zip"
 PACK_SHA256 = "15dbd6406c1c74c2cd7104388ab745f3605d026ede6fc6c61c754ddb30b194b2"
-USER_AGENT = "pixel-eub/1.0.0"
+USER_AGENT = "pixel-eub/1.0.0rc1"
 
 
 def default_cache() -> Path:
@@ -214,7 +214,9 @@ def select_image(
             raise EubError(
                 f"Cannot determine build date for {image.build}; specify a build."
             )
-        return (int(parts[1]), tuple(int(p) if p.isdigit() else p for p in parts[2:3]))
+        # Compare "019" and "019a" as (19, "") < (19, "a"), never int vs str.
+        number, suffix = re.fullmatch(r"(\d*)(.*)", parts[2]).groups()
+        return (int(parts[1]), int(number) if number else -1, suffix)
 
     if not build or build.lower() == "latest":
         newest = max(key(i) for i in candidates)

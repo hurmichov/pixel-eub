@@ -13,16 +13,20 @@ class Model:
     soc: str
     pack: str | None = None
     experimental: bool = False
+    # "required": a DPM-first ROM booted BL1 from UFS (user reports for Pixel 7
+    # series); "likely": same symptom reported less clearly. Pixel Tablet
+    # reports DPM-first sessions that still reach fastboot, so it has neither.
+    usb_bl1: str = ""
 
 
 MODELS = (
     Model("oriole", "Pixel 6", "gs101"),
     Model("raven", "Pixel 6 Pro", "gs101"),
     Model("bluejay", "Pixel 6a", "gs101"),
-    Model("panther", "Pixel 7", "gs201", "gs201"),
-    Model("cheetah", "Pixel 7 Pro", "gs201", "gs201"),
-    Model("lynx", "Pixel 7a", "gs201", "gs201", True),
-    Model("felix", "Pixel Fold", "gs201", "gs201", True),
+    Model("panther", "Pixel 7", "gs201", "gs201", usb_bl1="required"),
+    Model("cheetah", "Pixel 7 Pro", "gs201", "gs201", usb_bl1="required"),
+    Model("lynx", "Pixel 7a", "gs201", "gs201", True, usb_bl1="likely"),
+    Model("felix", "Pixel Fold", "gs201", "gs201", True, usb_bl1="required"),
     Model("tangorpro", "Pixel Tablet", "gs201", "gs201", True),
     Model("shiba", "Pixel 8", "zuma", "zuma/shiba"),
     Model("husky", "Pixel 8 Pro", "zuma", "zuma/husky"),
