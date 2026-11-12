@@ -1,3 +1,4 @@
+import os
 import struct
 import tempfile
 import unittest
@@ -69,6 +70,7 @@ class UsbInfoTests(unittest.TestCase):
         self.assertIn("malformed", usbinfo.decode(b"\x09\x02\x00")[0])
         self.assertIn("malformed", usbinfo.decode(b"\x01\x02")[0])
 
+    @unittest.skipIf(os.name == "nt", "Linux sysfs paths cannot be created on Windows")
     def test_sysfs_lookup_save_and_changes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "sys"

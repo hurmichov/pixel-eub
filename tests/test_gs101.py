@@ -21,7 +21,9 @@ class GS101Test(unittest.TestCase):
         (self.profile / "metadata.json").write_text(json.dumps({"device": "bluejay"}))
 
     def test_profile_checks_model_and_required_stages(self):
-        self.assertEqual(validate_profile("bluejay", self.profile), self.profile)
+        self.assertEqual(
+            validate_profile("bluejay", self.profile), self.profile.resolve()
+        )
         with self.assertRaises(EubError):
             validate_profile("oriole", self.profile)
         (self.profile / REQUIRED[0]).unlink()
@@ -30,10 +32,25 @@ class GS101Test(unittest.TestCase):
 
     def test_cli_requires_risk_acknowledgement(self):
         with patch("pixel_eub.gs101.run") as run:
-            self.assertEqual(main(["gs101", "--device", "bluejay", "--profile", str(self.profile)]), 1)
+            self.assertEqual(
+                main(["gs101", "--device", "bluejay", "--profile", str(self.profile)]),
+                1,
+            )
             run.assert_not_called()
             run.return_value = 0
-            self.assertEqual(main(["gs101", "--device", "bluejay", "--profile", str(self.profile), "--acknowledge-risk"]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "gs101",
+                        "--device",
+                        "bluejay",
+                        "--profile",
+                        str(self.profile),
+                        "--acknowledge-risk",
+                    ]
+                ),
+                0,
+            )
             run.assert_called_once()
 
 
@@ -42,7 +59,17 @@ class GUIArgumentTest(unittest.TestCase):
         from pixel_eub.gui.runner import Options, gs101_args
 
         options = Options(device="oriole", gs101_profile="/tmp/my profile")
-        self.assertEqual(gs101_args(options), ["gs101", "--device", "oriole", "--profile", "/tmp/my profile", "--acknowledge-risk"])
+        self.assertEqual(
+            gs101_args(options),
+            [
+                "gs101",
+                "--device",
+                "oriole",
+                "--profile",
+                "/tmp/my profile",
+                "--acknowledge-risk",
+            ],
+        )
         self.assertEqual(gs101_args(options, dry_run=True)[-1], "--check-profile")
         with self.assertRaises(ValueError):
             gs101_args(Options(device="oriole"))
