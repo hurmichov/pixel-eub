@@ -8,7 +8,7 @@
 - GS101 recovery uses modified boot stages; fastboot USB detection does not verify the target phone or permanent repair.
 
 
-## Unreleased
+### Additional changes in 1.0.1
 
 - Add `pixel-eub gui`, an optional GTK 4 / libadwaita interface with Dashboard,
   Firmware, Diagnostics, Analyzer, Terminal, Settings and Credits pages. It runs

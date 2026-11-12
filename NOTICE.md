@@ -29,8 +29,9 @@ redistribute its contents.
 
 Factory images come from Google's
 [factory image catalog](https://developers.google.com/android/images) and are
-subject to Google's terms. Do not attach firmware, device backups, or dumps to
-issues, pull requests, or releases of this project.
+subject to Google's terms. The separate GS101 profile archive contains firmware and modified derivatives
+subject to their own terms. Do not attach private device backups or dumps to
+issues or pull requests.
 
 ## Runtime dependency
 
