@@ -349,8 +349,12 @@ class Window(Adw.ApplicationWindow):
         change.set_valign(Gtk.Align.CENTER)
         self.sources_row.add_suffix(change)
         target.add(self.sources_row)
-        self.gs101_row = self.path_row("GS101 profile folder", "gs101_profile", folders=True,
-                                       empty="Select devices/<model> from the recovery archive")
+        self.gs101_row = self.path_row(
+            "GS101 profile folder",
+            "gs101_profile",
+            folders=True,
+            empty="Select devices/<model> from the recovery archive",
+        )
         target.add(self.gs101_row)
         wait = Adw.SwitchRow(
             title="Wait for the phone",
@@ -458,7 +462,10 @@ class Window(Adw.ApplicationWindow):
 
     def on_model(self, row, _param):
         index = row.get_selected()
-        is_gs101 = index not in (0, Gtk.INVALID_LIST_POSITION) and MODELS[index - 1].soc == "gs101"
+        is_gs101 = (
+            index not in (0, Gtk.INVALID_LIST_POSITION)
+            and MODELS[index - 1].soc == "gs101"
+        )
         if hasattr(self, "gs101_row"):
             self.gs101_row.set_visible(is_gs101)
             self.sources_row.set_visible(not is_gs101)
@@ -600,13 +607,25 @@ class Window(Adw.ApplicationWindow):
 
             def on_exit(code):
                 if code == 0 and dry_run:
-                    self.show_result("info", "Profile files and model checked. USB was not opened; boot compatibility is unverified.")
+                    self.show_result(
+                        "info",
+                        "Profile files and model checked. USB was not opened; boot compatibility is unverified.",
+                    )
                 elif code == 0:
-                    self.show_result("info", "Fastboot USB detected. Device identity and permanent recovery are not confirmed.")
+                    self.show_result(
+                        "info",
+                        "Fastboot USB detected. Device identity and permanent recovery are not confirmed.",
+                    )
                 elif code == 130:
-                    self.show_result("info", "Stopped. No automatic flashing was performed.")
+                    self.show_result(
+                        "info", "Stopped. No automatic flashing was performed."
+                    )
                 else:
-                    self.show_result("error", self.last_error() or f"GS101 command failed (exit code {code}).")
+                    self.show_result(
+                        "error",
+                        self.last_error()
+                        or f"GS101 command failed (exit code {code}).",
+                    )
 
             self.run(args, on_exit=on_exit)
 
@@ -619,7 +638,10 @@ class Window(Adw.ApplicationWindow):
         dialog.set_response_appearance("start", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
-        dialog.connect("response", lambda _dialog, response: launch() if response == "start" else None)
+        dialog.connect(
+            "response",
+            lambda _dialog, response: launch() if response == "start" else None,
+        )
         dialog.present(self)
 
     # ----- firmware -----------------------------------------------------
