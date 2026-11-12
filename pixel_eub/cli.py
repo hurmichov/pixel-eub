@@ -345,10 +345,23 @@ def parser():
         "files", type=Path, nargs="+", help="image, FBPK, factory ZIP or recovery pack"
     )
     gs101 = commands.add_parser("gs101", help="GS101 modified-stage Linux recovery")
-    gs101.add_argument("--device", required=True, choices=("bluejay", "oriole", "raven"))
-    gs101.add_argument("--profile", required=True, type=Path, help="prepared directory for the selected device")
-    gs101.add_argument("--check-profile", action="store_true", help="check profile without opening USB")
-    gs101.add_argument("--acknowledge-risk", action="store_true", help="acknowledge modified stages and recovery risks")
+    gs101.add_argument(
+        "--device", required=True, choices=("bluejay", "oriole", "raven")
+    )
+    gs101.add_argument(
+        "--profile",
+        required=True,
+        type=Path,
+        help="prepared directory for the selected device",
+    )
+    gs101.add_argument(
+        "--check-profile", action="store_true", help="check profile without opening USB"
+    )
+    gs101.add_argument(
+        "--acknowledge-risk",
+        action="store_true",
+        help="acknowledge modified stages and recovery risks",
+    )
     commands.add_parser(
         "gui", help="open the GTK4 graphical interface (needs PyGObject/libadwaita)"
     )
@@ -790,10 +803,14 @@ def main(argv=None) -> int:
 
             if args.check_profile:
                 validate_profile(args.device, args.profile)
-                print("GS101 profile is structurally complete and matches the selected model. USB was not opened.")
+                print(
+                    "GS101 profile is structurally complete and matches the selected model. USB was not opened."
+                )
                 return 0
             if not args.acknowledge_risk:
-                raise EubError("Read the GS101 warnings and pass --acknowledge-risk to continue.")
+                raise EubError(
+                    "Read the GS101 warnings and pass --acknowledge-risk to continue."
+                )
             return run(args.device, args.profile)
         elif args.command == "gui":
             from .gui import run

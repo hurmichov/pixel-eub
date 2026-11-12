@@ -112,7 +112,9 @@ def find_all(data: bytes, pattern: bytes) -> list[int]:
     return hits
 
 
-def http_get_bytes(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> tuple[bytes, dict]:
+def http_get_bytes(
+    url: str, headers: dict[str, str] | None = None, timeout: int = 30
+) -> tuple[bytes, dict]:
     req_headers = {"User-Agent": USER_AGENT}
     if headers:
         req_headers.update(headers)
@@ -123,17 +125,23 @@ def http_get_bytes(url: str, headers: dict[str, str] | None = None, timeout: int
 
 def fetch_factory_links(device: str) -> list[dict[str, str]]:
     """Fetch official factory image links for `device` from developers.google.com/android/images."""
-    print(f"[*] Fetching official Google factory images list from {IMAGES_PAGE_URL} ...")
-    raw, _ = http_get_bytes(IMAGES_PAGE_URL, headers={"Cookie": IMAGES_COOKIE}, timeout=45)
+    print(
+        f"[*] Fetching official Google factory images list from {IMAGES_PAGE_URL} ..."
+    )
+    raw, _ = http_get_bytes(
+        IMAGES_PAGE_URL, headers={"Cookie": IMAGES_COOKIE}, timeout=45
+    )
     page = raw.decode("utf-8", errors="replace")
 
     # Find device section if present, otherwise search full page
     anchor_re = re.compile(rf'id=["\']{re.escape(device)}["\']', re.IGNORECASE)
     m_anchor = anchor_re.search(page)
-    section = page[m_anchor.start():] if m_anchor else page
+    section = page[m_anchor.start() :] if m_anchor else page
     if m_anchor:
         # Cut at next device header section if any (e.g. another <h2 id="...">)
-        next_h2 = re.search(r'<h2\s+[^>]*id=["\'][a-z0-9_-]+["\']', section[50:], re.IGNORECASE)
+        next_h2 = re.search(
+            r'<h2\s+[^>]*id=["\'][a-z0-9_-]+["\']', section[50:], re.IGNORECASE
+        )
         if next_h2:
             section = section[: 50 + next_h2.start()]
 
@@ -157,10 +165,14 @@ def fetch_factory_links(device: str) -> list[dict[str, str]]:
             row_text = " ".join(html.unescape(row_text).split())
             if row_text:
                 label = row_text[:120]
-        results.append({"url": url, "build": build_id, "sha_prefix": sha_prefix, "label": label})
+        results.append(
+            {"url": url, "build": build_id, "sha_prefix": sha_prefix, "label": label}
+        )
 
     if not results:
-        raise RuntimeError(f"Could not find factory image links for {device} on {IMAGES_PAGE_URL}")
+        raise RuntimeError(
+            f"Could not find factory image links for {device} on {IMAGES_PAGE_URL}"
+        )
     return results
 
 
@@ -169,12 +181,16 @@ class HttpRangeReader(io.RawIOBase):
 
     def __init__(self, url: str):
         self.url = url
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
+        req = urllib.request.Request(
+            url, method="HEAD", headers={"User-Agent": USER_AGENT}
+        )
         with urllib.request.urlopen(req, timeout=30) as resp:
             self.length = int(resp.headers.get("Content-Length", "0"))
             accept_ranges = resp.headers.get("Accept-Ranges", "").lower()
         if self.length <= 0 or accept_ranges == "none":
-            raise RuntimeError("Server does not support HTTP Range or Content-Length is missing")
+            raise RuntimeError(
+                "Server does not support HTTP Range or Content-Length is missing"
+            )
         self.pos = 0
 
     def readable(self) -> bool:
@@ -200,7 +216,9 @@ class HttpRangeReader(io.RawIOBase):
         if self.pos >= self.length or size == 0:
             return b""
         end = self.length - 1 if size < 0 else min(self.length - 1, self.pos + size - 1)
-        data, _ = http_get_bytes(self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=60)
+        data, _ = http_get_bytes(
+            self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=60
+        )
         self.pos += len(data)
         return data
 
@@ -220,47 +238,77 @@ def download_full_file(url: str, dest: Path) -> Path:
             done += len(chunk)
             if total > 0:
                 pct = done * 100.0 / total
-                print(f"\r    {done / (1024*1024):.1f} / {total / (1024*1024):.1f} MB ({pct:.1f}%)", end="", flush=True)
+                print(
+                    f"\r    {done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB ({pct:.1f}%)",
+                    end="",
+                    flush=True,
+                )
         print()
     return dest
 
 
-def fetch_bootloader_from_remote_zip(url: str, device: str, out_path: Path, full_zip: bool = False) -> Path:
+def fetch_bootloader_from_remote_zip(
+    url: str, device: str, out_path: Path, full_zip: bool = False
+) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if not full_zip:
         try:
-            print(f"[*] Reading remote ZIP directory via HTTP Range (skipping ~2.5 GB download): {url}")
+            print(
+                f"[*] Reading remote ZIP directory via HTTP Range (skipping ~2.5 GB download): {url}"
+            )
             rr = HttpRangeReader(url)
             with zipfile.ZipFile(rr, "r") as zf:
-                bl_entries = [n for n in zf.namelist() if re.search(rf'(?:^|/)bootloader-{re.escape(device)}-[^/]+\.img$', n)]
+                bl_entries = [
+                    n
+                    for n in zf.namelist()
+                    if re.search(
+                        rf"(?:^|/)bootloader-{re.escape(device)}-[^/]+\.img$", n
+                    )
+                ]
                 if not bl_entries:
-                    raise RuntimeError(f"bootloader-{device}-*.img not found inside ZIP")
+                    raise RuntimeError(
+                        f"bootloader-{device}-*.img not found inside ZIP"
+                    )
                 entry = bl_entries[0]
                 info = zf.getinfo(entry)
-                print(f"[*] Extracting {entry} ({info.file_size / (1024*1024):.2f} MB)...")
+                print(
+                    f"[*] Extracting {entry} ({info.file_size / (1024 * 1024):.2f} MB)..."
+                )
                 data = zf.read(entry)
                 out_path.write_bytes(data)
                 print(f"[+] Saved: {out_path} ({len(data)} bytes)")
                 return out_path
         except Exception as e:
-            print(f"[!] Fast HTTP Range extraction failed ({e}); falling back to full archive download...")
+            print(
+                f"[!] Fast HTTP Range extraction failed ({e}); falling back to full archive download..."
+            )
 
     zip_dest = out_path.parent / Path(urllib.parse.urlparse(url).path).name
     download_full_file(url, zip_dest)
     return extract_bootloader_from_local_zip(zip_dest, device, out_path)
 
 
-def extract_bootloader_from_local_zip(zip_path: Path, device: str, out_path: Path) -> Path:
+def extract_bootloader_from_local_zip(
+    zip_path: Path, device: str, out_path: Path
+) -> Path:
     with zipfile.ZipFile(zip_path, "r") as zf:
-        bl_entries = [n for n in zf.namelist() if re.search(rf'(?:^|/)bootloader-{re.escape(device)}-[^/]+\.img$', n)]
+        bl_entries = [
+            n
+            for n in zf.namelist()
+            if re.search(rf"(?:^|/)bootloader-{re.escape(device)}-[^/]+\.img$", n)
+        ]
         if not bl_entries:
-            bl_entries = [n for n in zf.namelist() if "bootloader-" in n and n.endswith(".img")]
+            bl_entries = [
+                n for n in zf.namelist() if "bootloader-" in n and n.endswith(".img")
+            ]
         if not bl_entries:
             raise RuntimeError(f"bootloader-*.img not found inside {zip_path}")
         data = zf.read(bl_entries[0])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(data)
-        print(f"[+] Extracted from ZIP: {bl_entries[0]} -> {out_path} ({len(data)} bytes)")
+        print(
+            f"[+] Extracted from ZIP: {bl_entries[0]} -> {out_path} ({len(data)} bytes)"
+        )
         return out_path
 
 
@@ -311,9 +359,17 @@ def unpack_fbpk(bootloader_path: Path, partitions_dir: Path, split_dir: Path) ->
     gsa_hdr = (partitions_dir / "gsa.img").read_bytes()
     ap_ar_ns = struct.unpack_from("<I", bl2_hdr, 0x408)[0]
     ap_ar_s = struct.unpack_from("<I", gsa_hdr, 0x408)[0]
-    print(f"[+] Unpacked to {partitions_dir} and {split_dir} (ARB: ap-ar-ns={ap_ar_ns}, ap-ar-s={ap_ar_s})")
+    print(
+        f"[+] Unpacked to {partitions_dir} and {split_dir} (ARB: ap-ar-ns={ap_ar_ns}, ap-ar-s={ap_ar_s})"
+    )
 
-    return {"soc": soc, "bootloader_version": fw_ver, "ap_ar_ns": ap_ar_ns, "ap_ar_s": ap_ar_s, "stages": extracted}
+    return {
+        "soc": soc,
+        "bootloader_version": fw_ver,
+        "ap_ar_ns": ap_ar_ns,
+        "ap_ar_s": ap_ar_s,
+        "stages": extracted,
+    }
 
 
 def patch_bl1(bl1_orig: bytes) -> tuple[bytes, dict]:
@@ -330,10 +386,14 @@ def patch_bl1(bl1_orig: bytes) -> tuple[bytes, dict]:
     for idx in find_all(bl1_orig, bytes.fromhex("24008252")):
         if idx + 12 <= len(bl1_orig):
             bl_op, tbz_op = struct.unpack_from("<II", bl1_orig, idx + 4)
-            if (bl_op & 0xFC000000) == 0x94000000 and (tbz_op & 0xFFF8001F) == 0x36000000:
+            if (bl_op & 0xFC000000) == 0x94000000 and (
+                tbz_op & 0xFFF8001F
+            ) == 0x36000000:
                 p1_hits.append(idx + 8)
     if not p1_hits:
-        raise RuntimeError("BL1: Patch 1 pattern not found (mov w4,#0x1001 + bl + tbz w0,#0)")
+        raise RuntimeError(
+            "BL1: Patch 1 pattern not found (mov w4,#0x1001 + bl + tbz w0,#0)"
+        )
     p1_off = p1_hits[0]  # first occurrence checks header load result before body read
     buf[p1_off : p1_off + 4] = INSN_NOP
 
@@ -345,7 +405,9 @@ def patch_bl1(bl1_orig: bytes) -> tuple[bytes, dict]:
             if (bne_op & 0xFF00001F) == 0x54000001:
                 p3_candidates.append((idx + 8, idx - 4))
     if len(p3_candidates) != 1:
-        raise RuntimeError(f"BL1: expected 1 match for Patch 3, found {len(p3_candidates)}")
+        raise RuntimeError(
+            f"BL1: expected 1 match for Patch 3, found {len(p3_candidates)}"
+        )
     p3_off, ok_block = p3_candidates[0]
     buf[p3_off : p3_off + 4] = INSN_NOP
 
@@ -360,11 +422,18 @@ def patch_bl1(bl1_orig: bytes) -> tuple[bytes, dict]:
             if off + imm14 * 4 == ok_block:
                 p2_hits.append(off)
     if len(p2_hits) != 1:
-        raise RuntimeError(f"BL1: expected 1 match for Patch 2 (tbnz -> 0x{ok_block:x}), found {len(p2_hits)}")
+        raise RuntimeError(
+            f"BL1: expected 1 match for Patch 2 (tbnz -> 0x{ok_block:x}), found {len(p2_hits)}"
+        )
     p2_off = p2_hits[0]
     buf[p2_off : p2_off + 4] = encode_b(p2_off, ok_block)
 
-    info = {"header_flag": "0x410=0x01", "patch1_nop": hex(p1_off), "patch2_b": f"{hex(p2_off)}->{hex(ok_block)}", "patch3_nop": hex(p3_off)}
+    info = {
+        "header_flag": "0x410=0x01",
+        "patch1_nop": hex(p1_off),
+        "patch2_b": f"{hex(p2_off)}->{hex(ok_block)}",
+        "patch3_nop": hex(p3_off),
+    }
     print(f"[+] BL1 patched: {info}")
     return bytes(buf), info
 
@@ -376,7 +445,9 @@ def patch_pbl(pbl_orig: bytes) -> tuple[bytes, dict]:
     # Patch 1: ldr w8, [x8, #180] (08b540b9); blr x8 (00013fd6) -> mov x0, #1
     p1_hits = find_all(pbl_orig, bytes.fromhex("08b540b900013fd6"))
     if len(p1_hits) != 1:
-        raise RuntimeError(f"PBL: expected 1 match for Patch 1 (0x020200b4 blr x8), found {len(p1_hits)}")
+        raise RuntimeError(
+            f"PBL: expected 1 match for Patch 1 (0x020200b4 blr x8), found {len(p1_hits)}"
+        )
     p1_off = p1_hits[0] + 4
     buf[p1_off : p1_off + 4] = INSN_MOV_X0_1
 
@@ -385,14 +456,18 @@ def patch_pbl(pbl_orig: bytes) -> tuple[bytes, dict]:
     for idx in find_all(pbl_orig, bytes.fromhex("6b010c4a08010b2a")):
         if idx + 16 <= len(pbl_orig):
             b_op, cbz_op = struct.unpack_from("<II", pbl_orig, idx + 8)
-            if (b_op & 0xFC000000) == 0x14000000 and (cbz_op & 0xFF00001F) == 0x34000008:
+            if (b_op & 0xFC000000) == 0x14000000 and (
+                cbz_op & 0xFF00001F
+            ) == 0x34000008:
                 p2_off = idx + 12
                 imm19 = (cbz_op >> 5) & 0x7FFFF
                 if imm19 & 0x40000:
                     imm19 -= 0x80000
                 p2_hits.append((p2_off, p2_off + imm19 * 4))
     if len(p2_hits) != 1:
-        raise RuntimeError(f"PBL: expected 1 match for Patch 2 (SHA256 cbz), found {len(p2_hits)}")
+        raise RuntimeError(
+            f"PBL: expected 1 match for Patch 2 (SHA256 cbz), found {len(p2_hits)}"
+        )
     p2_off, p2_target = p2_hits[0]
     buf[p2_off : p2_off + 4] = encode_b(p2_off, p2_target)
 
@@ -404,11 +479,17 @@ def patch_pbl(pbl_orig: bytes) -> tuple[bytes, dict]:
             if (bl_op & 0xFC000000) == 0x94000000 and mov_op == 0x2A0003E8:
                 p3_hits.append(idx + 8)
     if len(p3_hits) != 1:
-        raise RuntimeError(f"PBL: expected 1 match for Patch 3 (GSA IPC), found {len(p3_hits)}")
+        raise RuntimeError(
+            f"PBL: expected 1 match for Patch 3 (GSA IPC), found {len(p3_hits)}"
+        )
     p3_off = p3_hits[0]
     buf[p3_off : p3_off + 4] = INSN_NOP
 
-    info = {"patch1_mov1": hex(p1_off), "patch2_b": f"{hex(p2_off)}->{hex(p2_target)}", "patch3_nop": hex(p3_off)}
+    info = {
+        "patch1_mov1": hex(p1_off),
+        "patch2_b": f"{hex(p2_off)}->{hex(p2_target)}",
+        "patch3_nop": hex(p3_off),
+    }
     print(f"[+] EPBL (pbl.img) patched: {info}")
     return bytes(buf), info
 
@@ -419,7 +500,9 @@ def patch_bl2b(bl2b_orig: bytes) -> tuple[bytes, dict]:
     pat = bytes.fromhex("800681d2c0e8a2f2000040b9a0ffff36")
     hits = find_all(bl2b_orig, pat)
     if not hits:
-        print("[i] BL2B: GSA wait loop (0x17460834) not found (older BL2B revision), skipping")
+        print(
+            "[i] BL2B: GSA wait loop (0x17460834) not found (older BL2B revision), skipping"
+        )
         return bytes(buf), {"gsa_patch_nop": None}
     if len(hits) != 1:
         raise RuntimeError(f"BL2B: expected 1 match for GSA loop, found {len(hits)}")
@@ -439,7 +522,9 @@ def patch_abl(abl_orig: bytes) -> tuple[bytes, dict]:
     prologue_pat = bytes.fromhex("fd7bbfa9fd030091")
     tail_hits = find_all(abl_orig, tail_pat)
     if len(tail_hits) != 1:
-        raise RuntimeError(f"ABL: expected 1 match for init_nos, found {len(tail_hits)}")
+        raise RuntimeError(
+            f"ABL: expected 1 match for init_nos, found {len(tail_hits)}"
+        )
     t_off = tail_hits[0]
     init_off = abl_orig.rfind(prologue_pat, max(0, t_off - 80), t_off)
     if init_off == -1 or (init_off % 4) != 0:
@@ -451,7 +536,9 @@ def patch_abl(abl_orig: bytes) -> tuple[bytes, dict]:
     lock_pat = bytes.fromhex("1f05007181000054400080523f0000b9")
     lock_hits = find_all(abl_orig, lock_pat)
     if len(lock_hits) != 1:
-        raise RuntimeError(f"ABL: expected 1 match for get_lock_state, found {len(lock_hits)}")
+        raise RuntimeError(
+            f"ABL: expected 1 match for get_lock_state, found {len(lock_hits)}"
+        )
     lock_off = lock_hits[0] - 12
     if lock_off < 0:
         raise RuntimeError(f"ABL: invalid get_lock_state offset: {lock_off}")
@@ -464,10 +551,16 @@ def patch_abl(abl_orig: bytes) -> tuple[bytes, dict]:
     prod_body_pat = bytes.fromhex("e0031faae1031faae3031faae4031faae5031faaff130039")
     prod_hits = find_all(abl_orig, prod_body_pat)
     if len(prod_hits) != 1:
-        raise RuntimeError(f"ABL: expected 1 match for is_prod_mode, found {len(prod_hits)}")
+        raise RuntimeError(
+            f"ABL: expected 1 match for is_prod_mode, found {len(prod_hits)}"
+        )
     p_off = prod_hits[0]
     stp_off = abl_orig.rfind(bytes.fromhex("fd7b01a9"), max(0, p_off - 96), p_off)
-    if stp_off < 4 or (struct.unpack_from("<I", abl_orig, stp_off - 4)[0] & 0xFF0003FF) != 0xD10003FF:
+    if (
+        stp_off < 4
+        or (struct.unpack_from("<I", abl_orig, stp_off - 4)[0] & 0xFF0003FF)
+        != 0xD10003FF
+    ):
         raise RuntimeError(f"ABL: is_prod_mode prologue not found before 0x{p_off:x}")
     prod_fn = stp_off - 4
     # strb wzr, [x0]; mov w0, wzr; ret
@@ -478,8 +571,15 @@ def patch_abl(abl_orig: bytes) -> tuple[bytes, dict]:
     return bytes(buf), info
 
 
-def prepare_device(device: str, out_dir: Path, bootloader_path: Path | None = None, zip_path: Path | None = None,
-                   full_zip: bool = False, list_only: bool = False, build_id: str | None = None) -> Path:
+def prepare_device(
+    device: str,
+    out_dir: Path,
+    bootloader_path: Path | None = None,
+    zip_path: Path | None = None,
+    full_zip: bool = False,
+    list_only: bool = False,
+    build_id: str | None = None,
+) -> Path:
     dev_dir = out_dir / device
     dev_dir.mkdir(parents=True, exist_ok=True)
     bl_img = dev_dir / f"bootloader-{device}.img"
@@ -493,7 +593,9 @@ def prepare_device(device: str, out_dir: Path, bootloader_path: Path | None = No
     else:
         links = fetch_factory_links(device)
         if list_only:
-            print(f"\nAvailable Google factory builds for {device} ({SUPPORTED_DEVICES[device]}):")
+            print(
+                f"\nAvailable Google factory builds for {device} ({SUPPORTED_DEVICES[device]}):"
+            )
             for i, item in enumerate(links, 1):
                 print(f"  [{i:2d}] {item['build']:18s} | {item['label']}")
             return dev_dir
@@ -501,11 +603,15 @@ def prepare_device(device: str, out_dir: Path, bootloader_path: Path | None = No
         if build_id:
             matches = [x for x in links if build_id.lower() in x["build"].lower()]
             if not matches:
-                raise RuntimeError(f"Build '{build_id}' not found for {device}. Run with --list.")
+                raise RuntimeError(
+                    f"Build '{build_id}' not found for {device}. Run with --list."
+                )
             chosen = matches[-1]
         print(f"[+] Selected Google build: {chosen['build']} ({chosen['label']})")
         print(f"    URL: {chosen['url']}")
-        fetch_bootloader_from_remote_zip(chosen["url"], device, bl_img, full_zip=full_zip)
+        fetch_bootloader_from_remote_zip(
+            chosen["url"], device, bl_img, full_zip=full_zip
+        )
 
     parts_dir = dev_dir / "partitions"
     split_dir = dev_dir / "split_stages"
@@ -525,21 +631,51 @@ def prepare_device(device: str, out_dir: Path, bootloader_path: Path | None = No
 
     meta["device"] = device
     meta["model"] = SUPPORTED_DEVICES[device]
-    meta["patches"] = {"bl1": bl1_info, "pbl": pbl_info, "bl2b": bl2b_info, "abl": abl_info}
-    (dev_dir / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+    meta["patches"] = {
+        "bl1": bl1_info,
+        "pbl": pbl_info,
+        "bl2b": bl2b_info,
+        "abl": abl_info,
+    }
+    (dev_dir / "metadata.json").write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False)
+    )
     print(f"\n[+] Device {device} ({SUPPORTED_DEVICES[device]}) is ready in {dev_dir}!")
     return dev_dir
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Pixel 6 / 6 Pro / 6a (GS101) Factory Bootloader Prep Tool")
-    parser.add_argument("--device", choices=sorted(SUPPORTED_DEVICES.keys()), help="Device codename (oriole, raven, bluejay)")
-    parser.add_argument("--bootloader", type=Path, help="Local bootloader-<device>-*.img file")
-    parser.add_argument("--zip", type=Path, help="Local official factory-<sha>.zip archive")
-    parser.add_argument("--full-zip", action="store_true", help="Download full factory .zip (~2.5 GB) instead of fast HTTP Range bootloader extraction")
-    parser.add_argument("--build", help="Select specific Build ID (defaults to latest release)")
-    parser.add_argument("--list", action="store_true", help="List available Google builds and exit")
-    parser.add_argument("--out-dir", type=Path, default=BASE_DIR / "devices", help="Output directory (default: devices/)")
+    parser = argparse.ArgumentParser(
+        description="Pixel 6 / 6 Pro / 6a (GS101) Factory Bootloader Prep Tool"
+    )
+    parser.add_argument(
+        "--device",
+        choices=sorted(SUPPORTED_DEVICES.keys()),
+        help="Device codename (oriole, raven, bluejay)",
+    )
+    parser.add_argument(
+        "--bootloader", type=Path, help="Local bootloader-<device>-*.img file"
+    )
+    parser.add_argument(
+        "--zip", type=Path, help="Local official factory-<sha>.zip archive"
+    )
+    parser.add_argument(
+        "--full-zip",
+        action="store_true",
+        help="Download full factory .zip (~2.5 GB) instead of fast HTTP Range bootloader extraction",
+    )
+    parser.add_argument(
+        "--build", help="Select specific Build ID (defaults to latest release)"
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="List available Google builds and exit"
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=BASE_DIR / "devices",
+        help="Output directory (default: devices/)",
+    )
     args = parser.parse_args()
 
     device = args.device
@@ -549,7 +685,12 @@ def main() -> int:
         print("  2) raven   (Pixel 6 Pro)")
         print("  3) bluejay (Pixel 6a)")
         choice = input("Enter number or codename [1/2/3]: ").strip().lower()
-        mapping = {"1": "oriole", "2": "raven", "3": "bluejay", **dict.fromkeys(SUPPORTED_DEVICES, None)}
+        mapping = {
+            "1": "oriole",
+            "2": "raven",
+            "3": "bluejay",
+            **dict.fromkeys(SUPPORTED_DEVICES, None),
+        }
         if choice in SUPPORTED_DEVICES:
             device = choice
         elif choice in mapping and mapping[choice]:
