@@ -23,11 +23,12 @@ from logs. Do not upload firmware or device backups.
   It must
   not bypass archive integrity, a changed phone identity, unknown ROM chips,
   or a ROM-reported signature/rollback failure.
-- On Linux, automatic port recovery may invoke `sudo setfacl` and
-  `sudo fuser -k -TERM` for a verified Pixel ROM node. It changes permissions
-  or terminates processes. Users can disable it with `--no-port-recovery`.
+- On Linux, opt-in port recovery (`--port-recovery`) may invoke `setfacl`
+  and `fuser -k -TERM` through `sudo`, or `pkexec` (polkit) when there is no
+  terminal, for a verified Pixel ROM node. It changes
+  permissions or terminates processes. It is disabled by default.
 - Recovery uploads go to RAM. The tool does not issue flash, erase or unlock
   commands. A serial disconnect alone is never proof of successful recovery.
 
-The stable release includes experimental recovery paths. There is no promise of a vulnerability response
+This release candidate includes experimental recovery paths. There is no promise of a vulnerability response
 deadline or guaranteed recovery on physical hardware.

@@ -8,7 +8,7 @@ transfer phase ends.
 
 English · [Русский](README.ru.md)
 
-**Hardware testing:** USB connection and image uploads have been tested on one
+**Hardware testing for the original `boot` command:** USB connection and image uploads have been tested on one
 physical Pixel 6a (user-reported). Successful recovery into bootloader fastboot
 has not been confirmed. This limited coverage does not establish recovery support for
 every listed model or bootloader version. A signed USB-bootable BL1 and the
@@ -17,6 +17,25 @@ phone's anti-rollback level still determine which images can boot.
 Images are uploaded to RAM. The tool does not flash partitions, unlock the
 bootloader, erase user data, or run scripts from downloaded archives.
 
+## GS101 recovery
+
+The GTK dashboard supports a separate Linux recovery path for Pixel 6, 6 Pro
+and 6a. Select the model and its prepared GS101 profile folder, then use Dry
+run or Start recovery. The author reports one successful Pixel 6a test and two
+successful Pixel 6 tests; Pixel 6 Pro has a profile but no reported hardware
+success. Read [the instructions and warnings](docs/gs101.md) before starting.
+
+On Linux, install the included udev rule to grant the active desktop session
+access to the ROM and fastboot USB devices (from the project directory):
+
+```sh
+sudo install -m 644 data/69-pixel-gs101.rules /etc/udev/rules.d/69-pixel-gs101.rules
+sudo udevadm control --reload-rules
+```
+
+Disconnect and reconnect the phone after installing the rule. See
+[USB access details](docs/gs101.md#usb-access-on-linux).
+
 ## Requirements
 
 - Python **3.10 or newer** and **pySerial 3.5** (supported range: `>=3.5,<4`).
@@ -24,7 +43,8 @@ bootloader, erase user data, or run scripts from downloaded archives.
 - Android SDK [Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
   for the final fastboot check. Serial uploads can run without `fastboot`, but
   the result will be reported as **unconfirmed**.
-- On Linux, optional automatic port repair uses `sudo`, `setfacl`, and `fuser`.
+- On Linux, opt-in port repair (`--port-recovery`) uses `sudo` (or `pkexec`
+  without a terminal), `setfacl`, and `fuser`.
   See [port access](#linux-port-access) before starting.
 
 The code includes serial backends for Linux, macOS, and Windows. The CI matrix
@@ -87,6 +107,16 @@ To enter ROM mode, disconnect the phone, hold Power and both volume buttons,
 connect USB, and keep holding for approximately 15 seconds. `--wait` scans for
 up to 60 seconds; use `--wait-timeout 120` for a longer window.
 
+**Pixel 7, 7 Pro and Fold (possibly 7a):** keep holding all three buttons until
+the ROM requests **BL1**, and release only after it requests DPM; the log says
+when. Users report that when the first request is DPM, the phone has already
+started BL1 from internal storage (UFS); that BL1 breaks GSA/GSC communication
+with the recovery images, so the chain stalls after BL3B and boots with errors.
+For Pixel 7, 7 Pro and Fold, pixel-eub therefore stops before uploading
+anything when DPM comes first and asks you to reconnect; `--allow-dpm-first`
+continues anyway. On Pixel 7a it only warns. Pixel Tablet reports show
+DPM-first sessions that still reach fastboot, so no check applies there.
+
 The log shows three phases:
 
 1. Find the Pixel ROM USB serial device and verify its ROM identity before upload.
@@ -112,6 +142,30 @@ permissions or an unusable cache return exit code 1; missing optional tools or
 an unplugged phone do not. `./pixel-eub -h` lists all command options;
 `./pixel-eub boot -h` shows just recovery options.
 
+## Graphical interface (Linux)
+
+```sh
+./pixel-eub gui
+```
+
+The optional GTK 4 / libadwaita window covers every CLI command: recovery with
+live phase and stage progress, recovery-pack and factory-image selection,
+`doctor`/`detect`, the image analyzer (`inspect`), a full log and all settings. Each action
+runs the same CLI in a child process and shows the exact command in the
+Terminal page, so behaviour and safety checks are identical. YES/NO questions
+become dialogs that still require typing `YES`. Override, sibling-pack and
+port-recovery switches apply to the current session only and are never saved.
+In the GUI, port recovery asks for the administrator password through the
+desktop's own polkit dialog (`pkexec`); the GUI never sees the password.
+A udev rule avoids the prompt entirely.
+
+Requirements: PyGObject, GTK 4 and libadwaita 1.6+ from your distribution
+(not pip): `sudo dnf install python3-gobject gtk4 libadwaita` on Fedora or
+`sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1` on Debian/Ubuntu.
+The CLI does not need them. For an application-menu entry, copy
+`data/io.github.hurmichov.PixelEub.desktop` to `~/.local/share/applications/`
+and `pixel_eub/gui/icons/hicolor` into `~/.local/share/icons/`.
+
 ## Compatibility
 
 | Models | SoC | Recovery source |
@@ -135,6 +189,19 @@ that flag and cannot replace a recovery BL1. Old recovery images may also be
 rejected by anti-rollback; a newer factory ZIP does not make an older recovery
 BL1 acceptable. See Google's [factory image instructions](https://developers.google.com/android/images)
 and the pinned [tensor-usbdl release](https://github.com/JoshuaDoes/tensor-usbdl/releases/tag/020).
+That release lists Pixel 8 / 8 Pro support only for bootloaders from April
+2025 or earlier; users with newer bootloaders report `bl1 header fail`, and
+pixel-eub mentions this in the error on zuma.
+
+User reports, not validated by this project:
+
+- After GSA1 (and sometimes BL3B) the phone can stay silent for 2-5 minutes
+  or longer while it verifies; this is normal. pixel-eub waits up to
+  `--ack-timeout` seconds (600 by default) and prints progress meanwhile.
+- Charge to at least 4200 mV before flashing: below that, `fastboot flash` has
+  failed. After confirming fastboot, pixel-eub prints the battery voltage.
+- Pixel Tablet can stop at BL31 without reaching fastboot: hold Power for about
+  30 seconds until it leaves USB, then try again.
 
 ## Downloads and cache
 
@@ -208,21 +275,24 @@ remains required for success.
 
 ## Linux port access
 
-Automatic port recovery is **enabled by default** for verified Pixel ROM
-serial nodes. On permission failure it may request `sudo` to grant the current
-user `rw` ACL access with `setfacl`. If a port is locked, it lists holders and
-uses `fuser -k -TERM` to terminate processes holding that node before retrying.
+Automatic port recovery is **disabled by default**. With `--port-recovery`,
+for verified Pixel ROM serial nodes only: on permission failure it may request
+`sudo` (from a terminal) or `pkexec` (polkit dialog, without a terminal) to grant the current user `rw` ACL access with `setfacl`. If a port is
+locked, it lists holders and uses `fuser -k -TERM` to terminate processes
+holding that node before retrying.
 
 These actions change permissions or terminate processes. A terminated process
 may also have been managing other devices. Current/ancestor processes are
 protected; unrelated serial nodes are not selected. A persistent permission
 failure after ACL repair does not trigger process termination.
 
-Disable the behavior when managing access yourself:
+Enable it only when you accept these actions:
 
 ```sh
-./pixel-eub boot --device cheetah --wait --no-port-recovery
+./pixel-eub boot --device cheetah --wait --port-recovery
 ```
+
+`--no-port-recovery` is still accepted and wins over `--port-recovery`.
 
 For lasting access, configure your distribution's serial group or a udev rule
 for `18d1:4f00`. If ModemManager repeatedly reclaims the device, configure a
@@ -231,10 +301,38 @@ per-device ignore rule. The tool does not change service or driver settings.
 ## Troubleshooting and development
 
 - `detect --all` lists serial ports and USB IDs.
+- `inspect FILE...` describes stage images, FBPK bootloaders, factory ZIPs and
+  recovery packs: stage, signed USB-boot flag and SoC family (known only for
+  keys in the pinned recovery pack). Use it on images from unknown sources: a
+  BL1 without the USB flag cannot boot over USB, and setting the flag by hand
+  breaks the signature.
 - `--port /dev/ttyACM0` or `--port COM3` selects a serial port explicitly.
 - `--verbose` shows raw ROM lines; redact serial numbers before sharing logs.
 - `--reconnect-wait` controls the ROM handover window.
 - `--verify-timeout` controls the final fastboot check.
+- `--ack-timeout` controls how long the ROM may stay silent after an upload.
+- `--dump-usb DIR` (Linux, research) saves the USB descriptors at every ROM
+  connection as `.bin` plus a decoded `.txt`, and logs what changed since the
+  previous connection (for example after BL1 or BL2). The bytes are read
+  passively from sysfs, where the kernel stored them at enumeration: no root,
+  no driver unloading, no USB transfers to the phone. The files include the USB
+  serial number; redact it before sharing. `detect --dump-usb DIR` does the same
+  for the ports found now.
+- `--capture PATH` (research) records every byte from the ROM and every upload
+  (length, first 64 bytes, SHA-256) with timestamps and connection numbers as
+  JSON lines; `PATH` may be a folder. No firmware is stored in full.
+- When the ROM sends a failure dump with `irom_booting_failure`, pixel-eub
+  shows it as one line with the code, status, value and address. Codes seen on
+  a Pixel 6a suggest `0x400` header or tag rejected, `0x500` USB boot not
+  permitted, `0x600` signature or key rejected; this is a hypothesis from three
+  attempts, not documented behaviour.
+- `--listen-after-failure SECONDS` (research) keeps reading after
+  `irom_booting_failure` and reports each repeated failure line with its time
+  and first word, plus any other ROM messages. Nothing is uploaded meanwhile;
+  the run still ends as a failure.
+- `--no-usb-check` sends a BL1 without the signed USB-boot flag anyway, for
+  experiments only. The ROM checks that flag itself as part of the signature and
+  is expected to answer `bl1 header fail`; the image only goes to RAM.
 - `--fastboot /path/to/fastboot` selects Platform-Tools explicitly.
 - `--override` has **two leading hyphens**.
 
